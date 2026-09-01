@@ -175,7 +175,7 @@ logger = logging.getLogger("portable_sam_fusion")
 
 def main():
     parser = argparse.ArgumentParser(
-        description="portable_sam2_explicit_coarse: single-stream WHU-1024 SAM2 training"
+        description="GeoEvi-OVIS: single-stream WHU-1024 SAM2 training"
     )
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument(

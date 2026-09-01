@@ -652,7 +652,7 @@ Three intentional or inherited protocol differences prevent interpreting this
 Source logs used for this diagnosis:
 
 ```text
-portable_sam2_explicit_coarse/logs/ablations/
+geoevi_ovis/logs/ablations/
   b0_aggregator_mlp_aligned_emaoff_gloo_v1_tr0.2_va1.0_20260729_095000_pid1719009.log
 /home/wangcheng2021/project/portable_sam2_fusion_new/whu1024_reproduce_bundle/
   portable_sam2_fusion_new/logs/ablation_hyperparam_whu1024_baseplus/

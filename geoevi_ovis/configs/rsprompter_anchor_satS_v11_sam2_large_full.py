@@ -26,10 +26,10 @@ def _load_sam2_registry():
         os.path.join(os.getcwd(), "configs", "_sam2_registry.py"),       # 从项目根运行（start 脚本 cd 到此）
         os.path.join(
             os.getcwd(),
-            "portable_sam2_explicit_coarse",
+            "geoevi_ovis",
             "configs",
             "_sam2_registry.py",
-        ),  # 从派生项目仓库根运行
+        ),  # 从 GeoEvi-OVIS 仓库根运行
         os.path.join(os.getcwd(), "_sam2_registry.py"),                  # cwd 恰好在 configs/
         os.path.join(os.path.dirname(os.getcwd()), "configs", "_sam2_registry.py"),  # cwd 在项目子目录
     ]

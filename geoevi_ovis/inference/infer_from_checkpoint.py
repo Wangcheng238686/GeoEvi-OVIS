@@ -31,7 +31,7 @@ logger = logging.getLogger("checkpoint_inference")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Load a portable_sam2_explicit_coarse checkpoint, rebuild its model, "
+            "Load a GeoEvi-OVIS checkpoint, rebuild its model, "
             "and run inference on an annotated WHU COCO split."
         )
     )

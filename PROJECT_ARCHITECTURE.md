@@ -1,4 +1,4 @@
-# Portable SAM2 Explicit Coarse：项目架构与文件指南
+# GeoEvi-OVIS：项目架构与文件指南
 
 > **2026-09-01 范围收敛声明（优先级高于下文历史描述）**：本项目已收敛为
 > 单分辨率、单流 WHU 的最小主线。以下路线/特性已从代码删除，正文中对它们的
@@ -29,7 +29,7 @@
 
 项目包含两个明确隔离的区域：
 
-- `portable_sam2_explicit_coarse/`：唯一的新主线实现和实验入口；
+- `geoevi_ovis/`：唯一的新主线实现和实验入口；
 - `sam2/`：随项目固定的官方 SAM2 运行时源码，新主线通过 `SAM2_REPO` 使用。
 
 新主线只保留已经选定的 PAFPN、显式 coarse mask、原生 PromptEncoder 加载，
@@ -196,13 +196,13 @@ final-mask 坐标契约，M0→C1、M1→C2 才是在相同 full-image 契约下
 | `devtools/` | 开发期工具（`zcode-mcp-bridge.mjs`），不属于项目运行时。 |
 | `environment.yml` | 可移植 conda 环境配置；版本对齐旧 `cvt2` 训练环境。本机 Windows 用 torch 2.1.0+cpu + mmcv 2.1.0 预编译 wheel；Linux 服务器按文件头注释换 torch 2.8 + CUDA 并 `mim install mmcv==2.1.0`。 |
 | `sam2/` | 固定的 SAM2 Python 包及 Hydra 配置；除明确升级 SAM2 外不要修改。 |
-| `portable_sam2_explicit_coarse/` | 新主线源码、配置、训练和消融入口。 |
+| `geoevi_ovis/` | 新主线源码、配置、训练和消融入口。 |
 | `tests/` | 组件 smoke、dense prompt 单测与 DDP 控制面 smoke。 |
 | `tools/` | `visualize_instances.py` 与一次性分析探针（`tools/analysis/`）。 |
 
 ## 4. 新主线逐文件说明
 
-### 4.1 配置：`portable_sam2_explicit_coarse/configs/`
+### 4.1 配置：`geoevi_ovis/configs/`
 
 | 文件 | 用途 |
 |---|---|
@@ -222,7 +222,7 @@ rsprompter_anchor_satS_v11_sam2_large_full.py
         └── whu1024_baseplus_explicit_coarse_densefix.py
 ```
 
-### 4.2 模型：`portable_sam2_explicit_coarse/models/`
+### 4.2 模型：`geoevi_ovis/models/`
 
 | 文件 | 用途 |
 |---|---|
@@ -250,7 +250,7 @@ rsprompter_anchor_satS_v11_sam2_large_full.py
 - `ShapePointMiner`：从 coarse logits 产生 2P2N；
 - `P2BoundaryRefiner`：在 PromptEncoder 前只修正 raw coarse 的局部边界。
 
-### 4.3 数据：`portable_sam2_explicit_coarse/data/`
+### 4.3 数据：`geoevi_ovis/data/`
 
 | 文件 | 用途 |
 |---|---|
@@ -307,7 +307,7 @@ loss，不做 rank-local 跳过。不同 DDP rank 的 `DistributedSampler` shard
   full-image resize；独立推理复用完全相同的 `model.predict` 路径；
 - validation 后执行 CUDA cache 和 Python GC 清理。
 
-### 4.4 训练：`portable_sam2_explicit_coarse/train/`
+### 4.4 训练：`geoevi_ovis/train/`
 
 | 文件 | 用途 |
 |---|---|
@@ -372,7 +372,7 @@ device，避免所有进程初始化阶段暂时落到 GPU0。
 
 恢复旧 checkpoint 续训时会保留旧实验记录，并补入新 schema 中缺失的字段。
 
-### 4.5 推理：`portable_sam2_explicit_coarse/inference/`
+### 4.5 推理：`geoevi_ovis/inference/`
 
 | 文件 | 用途 |
 |---|---|
@@ -430,7 +430,7 @@ checkpoint。训练脚本、推理脚本都不得根据 checkpoint 文件名反�
    `--config` 回退策略；
 6. 同步本文档的架构、文件用途、参数和推理支持说明。
 
-### 4.6 运行脚本：`portable_sam2_explicit_coarse/scripts/`
+### 4.6 运行脚本：`geoevi_ovis/scripts/`
 
 | 文件 | 用途 |
 |---|---|
@@ -505,7 +505,7 @@ source_delta_ratio=... applied_delta_ratio=...`。这些值跨 DDP rank 聚合�
 `logs/` 下其余目录保留历史运行日志和 `.params` 快照，均不是模型源码。
 
 新的 checkpoint 默认写到 `${PORTABLE_SAM2_CHECKPOINT_ROOT}/`，当前机器配置解析为
-`/data/wangcheng/checkpoint/portable_sam2_explicit_coarse/`；不应提交
+`/data/wangcheng/checkpoint/geoevi_ovis/`；不应提交
 checkpoint、临时日志、`__pycache__` 或数据集；项目内 `logs/` 已由 Git 忽略。
 本次语义修复后的 C1–C5、R1 和 coarse-strategy wrapper 默认 run tag 包含
 `_semanticfix_roi_only`，主线全量入口的默认 checkpoint 目录也包含该后缀，避免与
@@ -523,7 +523,7 @@ checkpoint、临时日志、`__pycache__` 或数据集；项目内 `logs/` 已�
 所有新主线命令从以下目录执行：
 
 ```bash
-cd /home/wangcheng2021/project/portable_sam2_explicit_coarse_new/portable_sam2_explicit_coarse
+cd /home/wangcheng2021/project/portable_sam2_explicit_coarse_new/geoevi_ovis
 ```
 
 迁移到另一台机器时，复制默认配置为被 Git 忽略的本机配置后修改：
@@ -789,6 +789,16 @@ bash scripts/inference/infer_whu_checkpoint.sh /path/to/model.pth --build-only -
 
 ## 8. 文档同步记录
 
+- 2026-09-01：项目更名为 **GeoEvi-OVIS**。主线目录
+  `portable_sam2_explicit_coarse/` 更名为 `geoevi_ovis/`（配置的
+  sys.path 候选、文档路径同步；服务端 checkpoint/tmp 默认路径与
+  `PORTABLE_SAM2_*` 环境变量名保持不变，避免孤儿化已有权重）。
+  建立分层 README 体系：`models/ train/ inference/ configs/ data/
+  scripts/ scripts/train/ scripts/inference/ tests/ tools/ tools/analysis/
+  contrib/ utils/ docs/` 各自维护本目录文件用途介绍；根 `README.md`
+  重写为项目摘要 + 目录索引 + 快速开始。架构文档标题同步为
+  "GeoEvi-OVIS：项目架构与文件指南"。
+
 - 2026-09-01：`scripts/` 按用途重排。训练入口归入 `scripts/train/`
   （主线分发器 + `ablations/` runner/wrappers/契约校验/test-only/smoke），
   推理入口归入 `scripts/inference/`（`infer_whu_checkpoint.sh`、
@@ -847,7 +857,7 @@ bash scripts/inference/infer_whu_checkpoint.sh /path/to/model.pth --build-only -
 - 2026-09-01：组织结构调整（低风险三项）。`train/train_rsprompter_fusion.py`
   更名为 `train/train.py`（训练器文件名去掉旧融合项目残留，runner/契约校验/
   uecoco wrapper/文档同步更新）；WHU 之外的数据集实验线归拢到
-  `portable_sam2_explicit_coarse/contrib/`（`ablations_uecoco/`、
+  `geoevi_ovis/contrib/`（`ablations_uecoco/`、
   `resplit_ue_coco.py`、`build_isaid_patches.py`，wrapper 的 PROJECT_ROOT
   层级不变、用法注释更新）；主线分发器 `run_whu1024_explicit_coarse_4gpu.sh`
   更名为 `run_whu1024_explicit_coarse.sh`（历史 4gpu 名与现行两卡口径不符，
@@ -911,7 +921,7 @@ bash scripts/inference/infer_whu_checkpoint.sh /path/to/model.pth --build-only -
   `paper-reviews/`、`采样示例图.pdf`/`双流模型.pdf`/`单流模型.pdf`）、
   `legacy_baseline/` 冻结复现包与顶层 `verify/reproduce_legacy_*.sh` 三个
   复现脚本、`.ua` 工具垃圾目录，以及全部被 Git 跟踪的
-  `portable_sam2_explicit_coarse/logs/` 实验日志与评估归档（约 130 个文件）。
+  `geoevi_ovis/logs/` 实验日志与评估归档（约 130 个文件）。
   `.gitignore` 恢复忽略 `logs/`、`.ua/` 与 LaTeX 中间产物。README、本文件与
   `MIGRATION_MANIFEST.md` 移除对应引用；历史基线数值以旧项目自身历史为准，
   不在本仓库复现。iSAID / ue_coco 数据管线代码按决定保留。
