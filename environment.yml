@@ -1,0 +1,51 @@
+# Portable SAM2 single-stream project environment.
+#
+# Two supported targets (versions aligned with the historical `cvt2` training
+# environment on the Linux server; the full linux-64 export stays in the old
+# project history):
+#
+# 1) Local Windows / CPU (verified working combo):
+#      conda env create -p D:\Apps\Anaconda3\envs\sam2 -f environment.yml
+#    mmcv 2.1.0 has prebuilt cp39 win_amd64 wheels ONLY against torch 2.1,
+#    so the local env pins torch 2.1.0+cpu and pulls mmcv from the
+#    cpu/torch2.1 wheel index.
+#
+# 2) Linux training server (CUDA): build with torch 2.8.0 + cu126 instead
+#      pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu126
+#    and install mmcv there via `mim install mmcv==2.1.0` (compiles against
+#    the server CUDA toolchain); keep every other pin identical.
+name: sam2
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - pip:
+      # --- torch stack (local Windows: CPU build pinned to 2.1 for mmcv wheels) ---
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - torch==2.1.0+cpu
+      - torchvision==0.16.0+cpu
+      # --- mmcv: prebuilt windows wheel against torch 2.1 ---
+      - --find-links https://download.openmmlab.com/mmcv/dist/cpu/torch2.1/index.html
+      - mmcv==2.1.0
+      # --- openmmlab stack ---
+      - mmengine==0.10.7
+      - mmdet==3.3.0
+      # --- science stack ---
+      - numpy==1.26.4
+      - scipy==1.13.1
+      - scikit-image==0.24.0
+      - scikit-learn==1.6.1
+      - opencv-python==4.11.0.86
+      - pillow==11.3.0
+      - shapely==2.0.7
+      # --- sam2 / prompt stack ---
+      - einops==0.8.1
+      - transformers==4.38.1
+      - huggingface-hub==0.36.0
+      # --- evaluation / io ---
+      - pycocotools==2.0.11
+      - matplotlib
+      - tqdm
+      - pyyaml

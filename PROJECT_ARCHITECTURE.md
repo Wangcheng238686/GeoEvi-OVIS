@@ -193,6 +193,7 @@ final-mask 坐标契约，M0→C1、M1→C2 才是在相同 full-image 契约下
 | `C5_V2_METHOD.md` | C5-v2 论文方法设计文档；整理完整架构、张量数据流、ECPG/P2-BRR、损失与制图说明。 |
 | `MIGRATION_MANIFEST.md` | 记录两个参考项目、选取内容、排除内容和复现规则。 |
 | `.gitignore` | 顶层 Git 忽略规则。 |
+| `environment.yml` | 可移植 conda 环境配置；版本对齐旧 `cvt2` 训练环境。本机 Windows 用 torch 2.1.0+cpu + mmcv 2.1.0 预编译 wheel；Linux 服务器按文件头注释换 torch 2.8 + CUDA 并 `mim install mmcv==2.1.0`。 |
 | `sam2/` | 固定的 SAM2 Python 包及 Hydra 配置；除明确升级 SAM2 外不要修改。 |
 | `portable_sam2_explicit_coarse/` | 新主线源码、配置、训练和消融入口。 |
 
@@ -774,6 +775,15 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 处理本项目的新增或改动时，它负责默认执行上述同步流程。
 
 ## 8. 文档同步记录
+
+- 2026-09-01：新增根目录 `environment.yml`（新项目首个环境配置文件；旧
+  `cvt2_env.yml` 是 linux-64 精确导出，随 `legacy_baseline` 删除，仅存于
+  Git 历史）。本机已在 `D:\Apps\Anaconda3\envs\sam2` 按该文件建好
+  Python 3.9 环境并验证：torch 2.1.0+cpu + mmcv 2.1.0（Windows 预编译
+  wheel 仅对 torch 2.1 提供，故本机固定该组合）+ mmdet 3.3.0 +
+  mmengine 0.10.7 + transformers 4.38.1；coarse decoder、P2-BRR、
+  RoIAlign 与全部项目模块导入通过。Linux 服务器按文件头注释改用
+  torch 2.8 + CUDA。
 
 - 2026-09-01：按新项目口径执行 B 级路线清理（均经确认）。固定
   `SAM_IMAGE_EMBED_STRIDE=16`（clean/coarse 配置与 runner 去除该 env）；
