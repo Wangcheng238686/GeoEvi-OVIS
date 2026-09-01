@@ -19,11 +19,11 @@ polygons (shifted); clipped annotations are rasterized -> cropped ->
 re-polygonized, with RLE fallback when contours degenerate.
 
 Usage:
-    python scripts/build_isaid_patches.py \
+    python contrib/build_isaid_patches.py \
         --src /data1/wangcheng/dataset/iSAID \
         --tar /data1/wangcheng/dataset/iSAID/isaid_patches_800 \
         --sets train,val --workers 24
-    python scripts/build_isaid_patches.py ... --qc 20   # after build
+    python contrib/build_isaid_patches.py ... --qc 20   # after build
 """
 
 from __future__ import annotations

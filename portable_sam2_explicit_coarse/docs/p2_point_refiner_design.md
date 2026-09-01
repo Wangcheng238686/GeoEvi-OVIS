@@ -53,7 +53,7 @@ P2PointRefiner(nn.Module)
    `no_grad` 跑同一个 miner 得 `gt_coords`；slot 规范化（p1/p2、n1/n2 各自按 (y,x) 排序配对）；
    `SmoothL1(beta=2px)`，负点权重 ×1.5（FP 砍除价值大）；建议总权重 0.2。
    端到端信号顺带免费：coords 可微，最终 mask loss 梯度可流过 offsets。
-4. `train/train_rsprompter_fusion.py`：仿 `--train-quality-head-only`（:1458/:1734）加
+4. `train/train.py`：仿 `--train-quality-head-only`（:1458/:1734）加
    `--train-p2-point-refiner-only` scope（冻结全部、只解冻新模块，~15 行）；
    每 epoch 日志加 mean|offset|、点误差(px)；每 5 epoch 附一次 offset 置零配对 val（防白跑教训）。
 

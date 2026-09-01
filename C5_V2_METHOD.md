@@ -823,7 +823,7 @@ refiner.
 | Dense canvas 构造 | `portable_sam2_explicit_coarse/rsprompter/dense_prompt_utils.py` |
 | P2-BRR | `portable_sam2_explicit_coarse/rsprompter/p2_boundary_refiner.py` |
 | Coarse/boundary auxiliary 接线 | `portable_sam2_explicit_coarse/rsprompter/models.py` |
-| 总损失与 DDP 归一化 | `portable_sam2_explicit_coarse/train/train_rsprompter_fusion.py` |
+| 总损失与 DDP 归一化 | `portable_sam2_explicit_coarse/train/train.py` |
 | 严格对照 R1-C4 | `portable_sam2_explicit_coarse/scripts/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh` |
 
 本文档应随 C5-v2 的结构、数据流、损失、梯度边界或消融口径变化同步更新。

@@ -23,15 +23,15 @@ cd portable_sam2_explicit_coarse
 bash scripts/smoke_test_components.sh
 
 # 默认：PAFPN + points+box+dense，P2BoundaryRefiner 关闭
-bash scripts/run_whu1024_explicit_coarse_4gpu.sh
+bash scripts/run_whu1024_explicit_coarse.sh
 
 # 官方 64×64 严格对照与唯一增量 C5-v2
 bash scripts/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh
 bash scripts/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
 
 # 消融
-EXPLICIT_PROMPT_MODE=points bash scripts/run_whu1024_explicit_coarse_4gpu.sh
-EXPLICIT_PROMPT_MODE=points_box bash scripts/run_whu1024_explicit_coarse_4gpu.sh
+EXPLICIT_PROMPT_MODE=points_box bash scripts/run_whu1024_explicit_coarse.sh
+EXPLICIT_PROMPT_MODE=points_box bash scripts/run_whu1024_explicit_coarse.sh
 ```
 
 默认数据与预训练权重路径保持旧基线口径，并可通过 `WHU1024_DATA_ROOT`、

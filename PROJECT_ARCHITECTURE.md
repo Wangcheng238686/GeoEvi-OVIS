@@ -193,6 +193,7 @@ final-mask 坐标契约，M0→C1、M1→C2 才是在相同 full-image 契约下
 | `C5_V2_METHOD.md` | C5-v2 论文方法设计文档；整理完整架构、张量数据流、ECPG/P2-BRR、损失与制图说明。 |
 | `MIGRATION_MANIFEST.md` | 记录两个参考项目、选取内容、排除内容和复现规则。 |
 | `.gitignore` | 顶层 Git 忽略规则。 |
+| `devtools/` | 开发期工具（`zcode-mcp-bridge.mjs`），不属于项目运行时。 |
 | `environment.yml` | 可移植 conda 环境配置；版本对齐旧 `cvt2` 训练环境。本机 Windows 用 torch 2.1.0+cpu + mmcv 2.1.0 预编译 wheel；Linux 服务器按文件头注释换 torch 2.8 + CUDA 并 `mim install mmcv==2.1.0`。 |
 | `sam2/` | 固定的 SAM2 Python 包及 Hydra 配置；除明确升级 SAM2 外不要修改。 |
 | `portable_sam2_explicit_coarse/` | 新主线源码、配置、训练和消融入口。 |
@@ -305,7 +306,7 @@ loss，不做 rank-local 跳过。不同 DDP rank 的 `DistributedSampler` shard
 | 文件 | 用途 |
 |---|---|
 | `__init__.py` | 训练包标记。 |
-| `train_rsprompter_fusion.py` | DDP 训练主入口；负责配置构建、参数组、EMA、checkpoint、断点恢复、COCO bbox/segm 验证和子集参数。 |
+| `train.py` | DDP 训练主入口；负责配置构建、参数组、EMA、checkpoint、断点恢复、COCO bbox/segm 验证和子集参数。 |
 
 常用 CLI：
 
@@ -421,7 +422,7 @@ checkpoint。训练脚本、推理脚本都不得根据 checkpoint 文件名反�
 
 | 文件 | 用途 |
 |---|---|
-| `run_whu1024_explicit_coarse_4gpu.sh` | 保留的历史文件名；当前实际复用公共 runner 的两卡 GPU 1/2 默认值，并按 prompt/refiner/stride 映射路线；可显式覆盖回四卡。 |
+| `run_whu1024_explicit_coarse.sh` | 主线训练分发器（原名 `run_..._4gpu.sh` 已更名）；按 prompt/P2 组合路由到 r1_c3/r1_c4/c5v2 wrapper，复用公共 runner 的两卡默认值。 |
 | `load_environment.sh` | shell 环境统一加载器；优先读取被忽略的 `configs/environment.local.sh`，否则读取 `configs/environment.sh`，并支持 `PORTABLE_SAM2_ENV_FILE` 显式指定。 |
 | `infer_whu_checkpoint.sh` | 指定 checkpoint 的单卡推理 shell 入口；其余参数透传给 Python 推理器。 |
 | `smoke_test_components.sh` | 启动轻量组件测试。 |
@@ -775,6 +776,17 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 处理本项目的新增或改动时，它负责默认执行上述同步流程。
 
 ## 8. 文档同步记录
+
+- 2026-09-01：组织结构调整（低风险三项）。`train/train_rsprompter_fusion.py`
+  更名为 `train/train.py`（训练器文件名去掉旧融合项目残留，runner/契约校验/
+  uecoco wrapper/文档同步更新）；WHU 之外的数据集实验线归拢到
+  `portable_sam2_explicit_coarse/contrib/`（`ablations_uecoco/`、
+  `resplit_ue_coco.py`、`build_isaid_patches.py`，wrapper 的 PROJECT_ROOT
+  层级不变、用法注释更新）；主线分发器 `run_whu1024_explicit_coarse_4gpu.sh`
+  更名为 `run_whu1024_explicit_coarse.sh`（历史 4gpu 名与现行两卡口径不符，
+  README 命令示例同步并顺带修正已失效的 `points` 模式示例）；仓库根目录
+  开发工具 `zcode-mcp-bridge.mjs` 移入 `devtools/`（`.zcode/` 为工具自管理
+  会话产物，保持原位）。
 
 - 2026-09-01：完成清理前后模型等价性验证（本机 CPU、真实 SAM2 Base+ 权重）。
   以 `729cd46`（精简前）为基准，对全部 7 个存活架构（r0_mlp、r1_c3、r1_c4、

@@ -3,7 +3,7 @@
 # then launches the ue_coco R1-C4-RD experiment on all 4 cards.
 #
 # Run detached:
-#   nohup setsid bash scripts/ablations_uecoco/wait_then_launch_r1_c4_rd.sh \
+#   nohup setsid bash contrib/ablations_uecoco/wait_then_launch_r1_c4_rd.sh \
 #     >/dev/null 2>&1 &
 #
 # Events are logged to logs/ablations_uecoco/wait_then_launch_<ts>.log.

@@ -120,7 +120,7 @@ CMD=(
   "${PYTHON}" -m torch.distributed.run
   "--nproc_per_node=${NPROC_PER_NODE}"
   "--master_port=${MASTER_PORT}"
-  train/train_rsprompter_fusion.py
+  train/train.py
   --config configs/whu1024_baseplus_explicit_coarse.py
   --data-root "${UECOCO_DATA_ROOT}"
   --use-whu-coco

@@ -13,9 +13,9 @@ never span splits after the rewrite. Split sizes target 70/15/15 of cells, with
 image counts reported so the ratio is visible per split too.
 
 Usage:
-    python scripts/resplit_ue_coco.py --data-root /data1/wangcheng/dataset/ue_coco
+    python contrib/resplit_ue_coco.py --data-root /data1/wangcheng/dataset/ue_coco
     # Dry-run (no files written, just reports):
-    python scripts/resplit_ue_coco.py --data-root ... --dry-run
+    python contrib/resplit_ue_coco.py --data-root ... --dry-run
 
 Outputs:
     annotations/train.clean.json / val.clean.json / test.clean.json
