@@ -1,8 +1,8 @@
 """Clean WHU-1024 / SAM2 Base+ detector baseline.
 
-This is the migration base.  It intentionally contains no IIMR, SABL, UAV or
-multi-view branch.  The neck is selectable between the retained legacy
-aggregator and the migrated PAFPN through ``NECK_TYPE``.
+MLP-bridge baseline config (prompt_sparse_mode="point").  The image
+embedding is fixed to the official stride-16 / 64x64 contract.  The neck is
+selectable between the legacy aggregator and the PAFPN through ``NECK_TYPE``.
 """
 
 import os
@@ -14,29 +14,11 @@ sam2_ckpt_path = os.environ.get(
     "SAM2_CKPT",
     "/data/wangcheng/pretrained-models/sam2/sam2_hiera_base_plus.pt",
 )
-sam_image_embedding_stride = int(
-    os.environ.get("SAM_IMAGE_EMBED_STRIDE", "32")
-)
-if sam_image_embedding_stride not in (16, 32):
-    raise ValueError(
-        "SAM_IMAGE_EMBED_STRIDE must be 16 (official 64x64) or "
-        f"32 (legacy 32x32), got {sam_image_embedding_stride}"
-    )
-sam_image_embedding_size = 1024 // sam_image_embedding_stride
-final_mask_coordinate_mode = os.environ.get(
-    "FINAL_MASK_COORDINATE_MODE", "roi_local"
-).strip().lower()
-if final_mask_coordinate_mode not in {"roi_local", "full_image"}:
-    raise ValueError(
-        "FINAL_MASK_COORDINATE_MODE must be roi_local or full_image, "
-        f"got {final_mask_coordinate_mode!r}"
-    )
-segm_score_mode = os.environ.get("SEGM_SCORE_MODE", "detector").strip().lower()
-if segm_score_mode not in {"detector", "mask_quality"}:
-    raise ValueError(
-        "SEGM_SCORE_MODE must be detector or mask_quality, "
-        f"got {segm_score_mode!r}"
-    )
+# Single fixed resolution contract: official stride-16 / 64x64 image
+# embedding, ROI-local final-mask postprocessing, detector-score segm ranking.
+sam_image_embedding_stride = 16
+sam_image_embedding_size = 64
+final_mask_coordinate_mode = "roi_local"
 
 model = dict(
     type="RSPrompterAnchor",
@@ -80,7 +62,6 @@ model = dict(
             freeze_no_mask_embed=False,
             load_no_mask_pretrained=False,
             final_mask_coordinate_mode=final_mask_coordinate_mode,
-            segm_score_mode=segm_score_mode,
             shape_prior_cfg=dict(enabled=False),
             p2_boundary_refiner_cfg=dict(enabled=False),
         ),

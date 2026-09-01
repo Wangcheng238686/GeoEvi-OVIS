@@ -30,22 +30,9 @@ def parse_args():
         required=True,
     )
     parser.add_argument(
-        "--expected-final-mask-loss-mode",
-        choices=("standard", "roi_balanced_dice"),
-        required=True,
-    )
-    parser.add_argument(
-        "--expected-roi-sam-enabled", type=int, choices=(0, 1), required=True
-    )
-    parser.add_argument(
         "--expected-image-embed-stride",
         type=int,
-        choices=(16, 32),
-        required=True,
-    )
-    parser.add_argument(
-        "--expected-segm-score-mode",
-        choices=("detector", "mask_quality"),
+        choices=(16,),
         required=True,
     )
     parser.add_argument("--train-subset-ratio", type=float, default=1.0)
@@ -115,82 +102,16 @@ def main():
         "final-mask coordinate mode mismatch",
     )
     final_mask_loss_cfg = head.get("final_mask_loss_cfg", {})
-    expected_train_mask_downscaling = os.environ.get(
-        "PROMPT_ENCODER_TRAIN_MASK_DOWNSCALING", "0"
-    ) == "1"
-    actual_train_mask_downscaling = bool(
-        head.get("prompt_encoder_cfg", {}).get(
-            "train_mask_downscaling", False
-        )
-    )
-    require(
-        actual_train_mask_downscaling == expected_train_mask_downscaling,
-        "PromptEncoder mask_downscaling trainability was not resolved into cfg.model",
-    )
     actual_final_mask_loss_mode = str(
         final_mask_loss_cfg.get("mode", "standard")
     )
     require(
-        actual_final_mask_loss_mode == args.expected_final_mask_loss_mode,
-        "final-mask loss mode mismatch",
+        actual_final_mask_loss_mode == "standard",
+        "final-mask loss mode must be standard",
     )
-    if actual_final_mask_loss_mode == "roi_balanced_dice":
-        expected_final_loss_cfg = {
-            "roi_expand_ratio": float(
-                os.environ.get("FINAL_MASK_ROI_EXPAND_RATIO", "1.20")
-            ),
-            "roi_bce_weight": float(
-                os.environ.get("FINAL_MASK_ROI_BCE_WEIGHT", "1.0")
-            ),
-            "roi_dice_weight": float(
-                os.environ.get("FINAL_MASK_ROI_DICE_WEIGHT", "1.0")
-            ),
-            "outside_bce_weight": float(
-                os.environ.get("FINAL_MASK_OUTSIDE_BCE_WEIGHT", "0.05")
-            ),
-        }
-        for key, expected in expected_final_loss_cfg.items():
-            require(
-                math.isclose(float(final_mask_loss_cfg[key]), expected),
-                f"final-mask loss {key} mismatch",
-            )
-    roi_sam_cfg = head.get("roi_sam_cfg", {})
-    actual_roi_sam_enabled = bool(roi_sam_cfg.get("enabled", False))
     require(
-        actual_roi_sam_enabled == bool(args.expected_roi_sam_enabled),
-        "ROI-SAM enable/config mismatch",
-    )
-    if actual_roi_sam_enabled:
-        require(
-            args.prompt_route == "coarse" and args.explicit_prompt_mode == "points",
-            "ROI-SAM must remain a strict C2 points-only variant",
-        )
-        require(
-            head.final_mask_coordinate_mode == "roi_local",
-            "ROI-SAM requires ROI-local final masks",
-        )
-        require(
-            int(roi_sam_cfg.sampling_ratio)
-            == int(os.environ.get("ROI_SAM_SAMPLING_RATIO", "2")),
-            "ROI-SAM sampling ratio mismatch",
-        )
-        require(bool(roi_sam_cfg.aligned), "ROI-SAM must use aligned RoIAlign")
-    require(
-        head.segm_score_mode == args.expected_segm_score_mode,
-        "segmentation score mode mismatch",
-    )
-    quality_head_enabled = bool(
-        head.get("quality_head_cfg", {}).get("enabled", False)
-    )
-    if head.segm_score_mode == "mask_quality":
-        require(
-            quality_head_enabled,
-            "mask-quality segmentation ranking requires an enabled quality head",
-        )
-    require(
-        ("mask_scores" if head.segm_score_mode == "mask_quality" else "scores")
-        == ("mask_scores" if args.expected_segm_score_mode == "mask_quality" else "scores"),
-        "segmentation score key mismatch",
+        head.segm_score_mode == "detector",
+        "segmentation score mode must be detector",
     )
 
     if args.prompt_route == "mlp":
@@ -213,13 +134,6 @@ def main():
         require(head.prompt_sparse_mode == "shape_point", head.prompt_sparse_mode)
         require(bool(head.prompt_encoder_enabled), "coarse route must enable PromptEncoder")
         require(bool(head.shape_prior_cfg.enabled), "coarse route must enable shape prior")
-        expected_context_fusion = os.environ.get(
-            "SHAPE_CONTEXT_FUSION", "roi_only"
-        ).strip().lower()
-        require(
-            head.shape_prior_cfg.fusion_type == expected_context_fusion,
-            "shape context/FiLM fusion mismatch",
-        )
         require(
             head.explicit_prompt_mode == args.explicit_prompt_mode,
             (head.explicit_prompt_mode, args.explicit_prompt_mode),
@@ -371,12 +285,9 @@ def main():
             None if args.prompt_route == "mlp" else head.explicit_prompt_mode
         ),
         "prompt_encoder_enabled": bool(head.prompt_encoder_enabled),
-        "prompt_encoder_train_mask_downscaling": actual_train_mask_downscaling,
         "shape_prior_enabled": bool(head.shape_prior_cfg.enabled),
         "shape_context_fusion": (
-            None
-            if args.prompt_route == "mlp"
-            else head.shape_prior_cfg.fusion_type
+            None if args.prompt_route == "mlp" else "roi_only"
         ),
         "dense_prompt_enabled": bool(head.shape_prior_cfg.get("use_shape_dense", False)),
         "dense_prompt_config": (
@@ -388,13 +299,8 @@ def main():
         "final_mask_coordinate_mode": head.final_mask_coordinate_mode,
         "final_mask_loss_mode": actual_final_mask_loss_mode,
         "final_mask_loss_config": dict(final_mask_loss_cfg),
-        "roi_sam_enabled": actual_roi_sam_enabled,
-        "roi_sam_config": dict(roi_sam_cfg),
         "segm_score_mode": head.segm_score_mode,
-        "segm_score_key": (
-            "mask_scores" if head.segm_score_mode == "mask_quality" else "scores"
-        ),
-        "quality_head_enabled": quality_head_enabled,
+        "segm_score_key": "scores",
         "p2_boundary_refiner_config": dict(head.p2_boundary_refiner_cfg),
         "architecture_contract": resolved_architecture,
         "sam_image_embedding_stride": int(cfg.model.sam_image_embedding_stride),
@@ -463,13 +369,9 @@ def main():
         model = MODELS.build(cfg.model)
         mask_head = model.roi_head.mask_head
         require(
-            mask_head.segm_score_mode == args.expected_segm_score_mode,
-            "built model segmentation score mode mismatch",
-        )
-        require(
-            mask_head.segm_score_key
-            == ("mask_scores" if args.expected_segm_score_mode == "mask_quality" else "scores"),
-            "built model segmentation score key mismatch",
+            mask_head.segm_score_mode == "detector"
+            and mask_head.segm_score_key == "scores",
+            "built model segmentation score contract mismatch",
         )
         require(
             int(model.sam_image_embedding_stride)
@@ -514,41 +416,14 @@ def main():
             require(mask_head.point_emb is None, "coarse route constructed legacy MLP")
             require(mask_head.prompt_encoder is not None, "coarse route missing PromptEncoder")
             require(mask_head.shape_injector is not None, "coarse route missing shape head")
-            trainable_mask_downscaling = sum(
-                parameter.numel()
-                for parameter in mask_head.prompt_encoder.mask_downscaling.parameters()
-                if parameter.requires_grad
-            )
+            injector = mask_head.shape_injector
             require(
-                trainable_mask_downscaling
-                == (4684 if expected_train_mask_downscaling else 0),
-                "PromptEncoder mask_downscaling trainable-parameter contract mismatch",
+                getattr(injector, "visual_context_proj", None) is None
+                and getattr(injector, "spatial_cross_attn", None) is None
+                and getattr(injector, "gamma_head", None) is None
+                and getattr(injector, "beta_head", None) is None,
+                "roi_only injector must not construct FiLM/context parameters",
             )
-            if expected_train_mask_downscaling:
-                trainable_prompt_encoder = sum(
-                    parameter.numel()
-                    for parameter in mask_head.prompt_encoder.parameters()
-                    if parameter.requires_grad
-                )
-                require(
-                    trainable_prompt_encoder == 4684,
-                    "densefix-unfreeze must train only mask_downscaling",
-                )
-            expected_context_fusion = os.environ.get(
-                "SHAPE_CONTEXT_FUSION", "roi_only"
-            ).strip().lower()
-            require(
-                mask_head.shape_injector.fusion_type == expected_context_fusion,
-                "built model shape context/FiLM fusion mismatch",
-            )
-            if expected_context_fusion == "roi_only":
-                require(
-                    mask_head.shape_injector.visual_context_proj is None
-                    and mask_head.shape_injector.spatial_cross_attn is None
-                    and mask_head.shape_injector.gamma_head is None
-                    and mask_head.shape_injector.beta_head is None,
-                    "roi_only must not construct inactive FiLM/context parameters",
-                )
             require(
                 bool(mask_head.no_mask_pretrained_loaded),
                 "coarse route silently missed pretrained no_mask_embed",
@@ -639,116 +514,6 @@ def main():
                 == bool(args.p2_boundary_refiner_enabled),
                 "P2BoundaryRefiner model/config mismatch",
             )
-            require(
-                bool(mask_head.roi_sam_enabled)
-                == bool(args.expected_roi_sam_enabled),
-                "built model ROI-SAM state mismatch",
-            )
-            if args.expected_roi_sam_enabled:
-                probe_feature = torch.cat(
-                    [torch.ones(1, 1, 8, 8), torch.full((1, 1, 8, 8), 3.0)],
-                    dim=0,
-                )
-                probe_boxes = torch.tensor(
-                    [[128.0, 128.0, 896.0, 896.0], [0.0, 0.0, 512.0, 512.0]]
-                )
-                probe_ids = torch.tensor([0, 1], dtype=torch.long)
-                cropped = mask_head._roi_sam_crop_feature(
-                    probe_feature, probe_boxes, probe_ids
-                )
-                require(
-                    tuple(cropped.shape) == (2, 1, 8, 8),
-                    "ROI-SAM feature crop shape regression",
-                )
-                require(
-                    torch.allclose(cropped[0], torch.ones_like(cropped[0]))
-                    and torch.allclose(cropped[1], torch.full_like(cropped[1], 3.0)),
-                    "ROI-SAM feature crops mixed image ownership",
-                )
-                local_boxes = mask_head._roi_sam_local_boxes(probe_boxes)
-                expected_local = torch.tensor(
-                    [[0.0, 0.0, 1024.0, 1024.0]]
-                ).expand_as(local_boxes)
-                require(
-                    torch.equal(local_boxes, expected_local),
-                    "ROI-SAM PromptEncoder local-coordinate regression",
-                )
-                mask_head.eval()
-                with torch.no_grad():
-                    roi_forward = mask_head(
-                        x=torch.randn(1, 512, 14, 14),
-                        image_embeddings=torch.randn(1, 256, 32, 32),
-                        image_positional_embeddings=torch.zeros(1, 256, 32, 32),
-                        roi_img_ids=torch.tensor([0], dtype=torch.long),
-                        high_res_features=[
-                            torch.randn(1, 256, 128, 128),
-                            torch.randn(1, 256, 64, 64),
-                        ],
-                        boxes=torch.tensor([[128.0, 192.0, 896.0, 832.0]]),
-                        prompt_rois=torch.tensor(
-                            [[0.0, 128.0, 192.0, 896.0, 832.0]]
-                        ),
-                    )
-                require(
-                    tuple(roi_forward[0].shape[-2:]) == (128, 128),
-                    "ROI-SAM MaskDecoder did not preserve the native 128x128 ROI grid",
-                )
-                require(
-                    roi_forward[2] is not None
-                    and tuple(roi_forward[2]["raw_logits"].shape[-2:]) == (64, 64),
-                    "ROI-SAM coarse branch output regression",
-                )
-
-            if args.expected_final_mask_loss_mode == "roi_balanced_dice":
-                require(
-                    mask_head.final_mask_loss_cfg.mode == "roi_balanced_dice",
-                    "built model lost ROI-focused final-mask loss",
-                )
-                probe_target = torch.zeros((1, 8, 8))
-                probe_target[:, 3:5, 3:5] = 1
-                probe_support = mask_head.get_final_mask_roi_support(
-                    [
-                        argparse.Namespace(
-                            pos_priors=torch.tensor(
-                                [[16.0, 16.0, 48.0, 48.0]]
-                            )
-                        )
-                    ],
-                    [
-                        argparse.Namespace(
-                            masks=argparse.Namespace(height=64, width=64)
-                        )
-                    ],
-                    target_size=(8, 8),
-                    device=torch.device("cpu"),
-                )
-                good_logits = torch.full((1, 8, 8), -4.0)
-                good_logits[:, 3:5, 3:5] = 4.0
-                bad_logits = -good_logits
-                good_loss, good_stats = mask_head.roi_balanced_final_mask_loss(
-                    good_logits,
-                    probe_target,
-                    probe_support,
-                    mask_head.final_mask_loss_cfg,
-                )
-                bad_loss, _ = mask_head.roi_balanced_final_mask_loss(
-                    bad_logits,
-                    probe_target,
-                    probe_support,
-                    mask_head.final_mask_loss_cfg,
-                )
-                require(
-                    float(good_loss) < float(bad_loss),
-                    "ROI-focused final-mask loss does not prefer the correct mask",
-                )
-                require(
-                    math.isclose(
-                        float(good_stats["debug_final_mask_roi_coverage"]),
-                        0.5625,
-                    ),
-                    "ROI-focused support coverage regression",
-                )
-
         # Regression guard shared by validation and checkpoint inference.
         image_size = 64
         bbox = torch.tensor([[16.0, 16.0, 48.0, 48.0]])
@@ -807,7 +572,7 @@ def main():
                 if parameter.requires_grad
             )
         )
-        needs_model_config_roundtrip = expected_train_mask_downscaling or (
+        needs_model_config_roundtrip = (
             args.prompt_route == "coarse"
             and (
                 os.environ.get("SHAPE_DENSE_TRANSFORM", "raw_logits")
@@ -830,24 +595,6 @@ def main():
                 == mask_head.dense_prompt_cfg,
                 "checkpoint-style reconstruction changed dense_prompt_cfg",
             )
-            if expected_train_mask_downscaling:
-                require(
-                    bool(
-                        rebuilt_mask_head.prompt_encoder_cfg.get(
-                            "train_mask_downscaling", False
-                        )
-                    ),
-                    "checkpoint reconstruction lost mask_downscaling trainability",
-                )
-                require(
-                    sum(
-                        parameter.numel()
-                        for parameter in rebuilt_mask_head.prompt_encoder.parameters()
-                        if parameter.requires_grad
-                    )
-                    == 4684,
-                    "checkpoint reconstruction changed PromptEncoder trainable parameters",
-                )
             report["model_config_strict_roundtrip"] = "ok"
 
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))

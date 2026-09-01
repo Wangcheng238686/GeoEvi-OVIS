@@ -1,4 +1,11 @@
-# WHU-1024 ablation matrix
+# Ablation wrappers
+
+> **2026-09-01 范围收敛**：仅存 wrapper 为 r0（MLP 基线）、r1_c3、r1_c4、
+> r1_c4_rd（±roi_local）、r1_c4_g、c5v2、paper_promptminer_rd_p2_whu_full
+> (±fast)。stride 固定 16；B/M/C1–C4、C2-L/R、coarse_strategy、
+> prompt_content 线已删除；FiLM/SHAPE_CONTEXT_FUSION、SEGM_SCORE_MODE、
+> PromptEncoder 解冻等开关已移除。下文涉及它们的表格与段落为历史记录。
+
 
 | ID | Image emb. | Neck | Prompt route | Final mask | FiLM | Box token | Dense prompt | P2 refiner |
 |---|---:|---|---|---|---:|---:|---:|---:|
@@ -58,19 +65,6 @@ validation/checkpoint inference paste the mask through the detected box.
 bash scripts/ablations/m0_aggregator_mlp_full_image.sh
 bash scripts/ablations/m1_pafpn_mlp_full_image.sh
 ```
-
-All coarse experiments currently default to `SHAPE_CONTEXT_FUSION=roi_only`.
-This is a true no-FiLM route: global context projection, box-conditioned
-cross-attention, gamma/beta heads and the context gate are not constructed.
-FiLM remains available only for a later controlled ablation:
-
-```bash
-SHAPE_CONTEXT_FUSION=gated_spatial_film \
-  bash scripts/ablations/c4_pafpn_coarse_points_box_dense.sh
-```
-
-The default run tag includes the resolved fusion name, so this command writes
-to a `*_gated_spatial_film` experiment rather than mixing with `*_roi_only`.
 
 B0 is the new-mainline bridge control. The byte-exact historical baseline
 package was removed from this repository on 2026-09-01; it lives only in the

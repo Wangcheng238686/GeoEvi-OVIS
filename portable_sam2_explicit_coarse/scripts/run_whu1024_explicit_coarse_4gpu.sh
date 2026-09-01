@@ -15,24 +15,19 @@ export VAL_SUBSET_RATIO="${VAL_SUBSET_RATIO:-1.0}"
 export CHECKPOINT_DIR="${CHECKPOINT_DIR:-${PORTABLE_SAM2_CHECKPOINT_ROOT}/${EXPLICIT_PROMPT_MODE}_p2br${P2_BOUNDARY_REFINER_ENABLED}}"
 export RUN_TAG="${RUN_TAG:-explicit_${EXPLICIT_PROMPT_MODE}_p2br${P2_BOUNDARY_REFINER_ENABLED}}"
 
-case "${EXPLICIT_PROMPT_MODE}:${P2_BOUNDARY_REFINER_ENABLED}:${SAM_IMAGE_EMBED_STRIDE:-32}" in
-  points:0:32)
-    WRAPPER="scripts/ablations/c2_pafpn_coarse_points.sh"
+# Image-embedding resolution is fixed to the official stride-16 contract.
+case "${EXPLICIT_PROMPT_MODE}:${P2_BOUNDARY_REFINER_ENABLED}" in
+  points_box:0)
+    WRAPPER="scripts/ablations/r1_c3_pafpn_coarse_points_box_emb64.sh"
     ;;
-  points_box:0:32)
-    WRAPPER="scripts/ablations/c3_pafpn_coarse_points_box.sh"
-    ;;
-  points_box_dense:0:32)
-    WRAPPER="scripts/ablations/c4_pafpn_coarse_points_box_dense.sh"
-    ;;
-  points_box_dense:0:16)
+  points_box_dense:0)
     WRAPPER="scripts/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh"
     ;;
-  points_box_dense:1:16)
+  points_box_dense:1)
     WRAPPER="scripts/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh"
     ;;
   *)
-    echo "Unsupported prompt/refiner/stride combination: ${EXPLICIT_PROMPT_MODE}/${P2_BOUNDARY_REFINER_ENABLED}/${SAM_IMAGE_EMBED_STRIDE:-32}" >&2
+    echo "Unsupported prompt/refiner combination: ${EXPLICIT_PROMPT_MODE}/${P2_BOUNDARY_REFINER_ENABLED}" >&2
     exit 2
     ;;
 esac

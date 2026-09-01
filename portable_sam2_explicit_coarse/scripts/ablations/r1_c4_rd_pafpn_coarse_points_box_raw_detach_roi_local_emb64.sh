@@ -21,7 +21,6 @@ export NECK_TYPE="pafpn"
 export PROMPT_ROUTE="coarse"
 export EXPLICIT_PROMPT_MODE="points_box_dense"
 export P2_BOUNDARY_REFINER_ENABLED=0
-export SAM_IMAGE_EMBED_STRIDE=16
 export SHAPE_DENSE_TRANSFORM="raw_logits"
 export SHAPE_DENSE_DETACH=1
 export FINAL_MASK_COORDINATE_MODE="roi_local"

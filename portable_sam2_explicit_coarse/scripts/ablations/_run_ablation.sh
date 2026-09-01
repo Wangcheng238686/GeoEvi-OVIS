@@ -47,56 +47,24 @@ case "${NECK_TYPE}" in
   *) echo "NECK_TYPE must be aggregator or pafpn, got ${NECK_TYPE}" >&2; exit 2 ;;
 esac
 
-ROI_SAM_ENABLED="${ROI_SAM_ENABLED:-0}"
-case "${ROI_SAM_ENABLED}" in
-  0|1) ;;
-  *) echo "ROI_SAM_ENABLED must be 0 or 1, got ${ROI_SAM_ENABLED}" >&2; exit 2 ;;
-esac
-ROI_SAM_SAMPLING_RATIO="${ROI_SAM_SAMPLING_RATIO:-2}"
-case "${ROI_SAM_SAMPLING_RATIO}" in
-  ''|*[!0-9]*) echo "ROI_SAM_SAMPLING_RATIO must be >= 0" >&2; exit 2 ;;
-esac
-
 case "${PROMPT_ROUTE}" in
   mlp)
-    if [[ "${ROI_SAM_ENABLED}" != "0" ]]; then
-      echo "ROI-SAM is only supported by the explicit coarse route" >&2
-      exit 2
-    fi
     CONFIG_PATH="configs/whu1024_baseplus_clean.py"
     EXPECTED_EXPLICIT_MODE="none"
     export EXPLICIT_PROMPT_MODE="none"
     export P2_BOUNDARY_REFINER_ENABLED=0
-    FINAL_MASK_COORDINATE_MODE="${FINAL_MASK_COORDINATE_MODE:-roi_local}"
-    case "${FINAL_MASK_COORDINATE_MODE}" in
-      roi_local|full_image) ;;
-      *) echo "invalid FINAL_MASK_COORDINATE_MODE=${FINAL_MASK_COORDINATE_MODE}" >&2; exit 2 ;;
-    esac
+    FINAL_MASK_COORDINATE_MODE="roi_local"
     DEFAULT_PROMPT_DEBUG_STATS=0
     ;;
   coarse)
     CONFIG_PATH="configs/whu1024_baseplus_explicit_coarse.py"
-    # A wrapper may swap in a config variant (e.g. densefix) that differs only
-    # in frozen model-architecture knobs. Unset by default, so every existing
-    # coarse experiment keeps its committed config path unchanged.
-    if [[ -n "${CONFIG_OVERRIDE:-}" ]]; then
-      CONFIG_PATH="${CONFIG_OVERRIDE}"
-    fi
     : "${EXPLICIT_PROMPT_MODE:?coarse wrapper must set EXPLICIT_PROMPT_MODE}"
     case "${EXPLICIT_PROMPT_MODE}" in
-      points|box|mask|points_box|points_box_dense) ;;
+      points_box|points_box_dense) ;;
       *) echo "invalid EXPLICIT_PROMPT_MODE=${EXPLICIT_PROMPT_MODE}" >&2; exit 2 ;;
     esac
     EXPECTED_EXPLICIT_MODE="${EXPLICIT_PROMPT_MODE}"
-    if [[ "${ROI_SAM_ENABLED}" == "1" ]]; then
-      if [[ "${EXPLICIT_PROMPT_MODE}" != "points" ]]; then
-        echo "ROI-SAM is a strict points-only C2 variant" >&2
-        exit 2
-      fi
-      FINAL_MASK_COORDINATE_MODE="roi_local"
-    else
-      FINAL_MASK_COORDINATE_MODE="${FINAL_MASK_COORDINATE_MODE:-roi_local}"
-    fi
+    FINAL_MASK_COORDINATE_MODE="${FINAL_MASK_COORDINATE_MODE:-roi_local}"
     DEFAULT_PROMPT_DEBUG_STATS=1
     ;;
   *) echo "PROMPT_ROUTE must be mlp or coarse, got ${PROMPT_ROUTE}" >&2; exit 2 ;;
@@ -104,7 +72,6 @@ esac
 
 export NECK_TYPE
 export FINAL_MASK_COORDINATE_MODE
-export ROI_SAM_ENABLED ROI_SAM_SAMPLING_RATIO
 SHAPE_DENSE_TRANSFORM="${SHAPE_DENSE_TRANSFORM:-raw_logits}"
 case "${SHAPE_DENSE_TRANSFORM}" in
   raw_logits|confidence_signed|gaussian_edt) ;;
@@ -124,15 +91,7 @@ if [[ "${SHAPE_DENSE_TRANSFORM}" == "gaussian_edt" && "${SHAPE_DENSE_DETACH}" !=
 fi
 export SHAPE_DENSE_TRANSFORM SHAPE_DENSE_DETACH
 export SHAPE_GAUSSIAN_FOREGROUND_THRESHOLD SHAPE_GAUSSIAN_OMEGA SHAPE_GAUSSIAN_GAMMA
-SAM_IMAGE_EMBED_STRIDE="${SAM_IMAGE_EMBED_STRIDE:-32}"
-case "${SAM_IMAGE_EMBED_STRIDE}" in
-  16|32) ;;
-  *)
-    echo "SAM_IMAGE_EMBED_STRIDE must be 16 or 32, got ${SAM_IMAGE_EMBED_STRIDE}" >&2
-    exit 2
-    ;;
-esac
-export SAM_IMAGE_EMBED_STRIDE
+# Image-embedding resolution is fixed to the official stride-16 contract.
 export SAM2_MODEL_SIZE=base_plus
 export MAX_EPOCHS="${MAX_EPOCHS:-80}"
 if [ -n "${CLI_MASTER_PORT}" ]; then
@@ -219,14 +178,7 @@ fi
 # "disable the bbox-best checkpoint" (best-only retention wrappers); only a
 # completely unset variable falls back to the default metric.
 SAVE_BBOX_BEST_METRIC="${SAVE_BBOX_BEST_METRIC-bbox/mAP}"
-SEGM_SCORE_MODE="${SEGM_SCORE_MODE:-detector}"
-case "${SEGM_SCORE_MODE}" in
-  detector|mask_quality) ;;
-  *)
-    echo "SEGM_SCORE_MODE must be detector or mask_quality, got ${SEGM_SCORE_MODE}" >&2
-    exit 2
-    ;;
-esac
+SEGM_SCORE_MODE="detector"
 EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-10}"
 EARLY_STOPPING_START_EPOCH="${EARLY_STOPPING_START_EPOCH:-20}"
 EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-5e-4}"
@@ -236,20 +188,7 @@ SAT_OTHER_LR_MULT="${SAT_OTHER_LR_MULT:-1.0}"
 MASK_DECODER_LR_MULT="${MASK_DECODER_LR_MULT:-1.0}"
 NO_MASK_LR_MULT="${NO_MASK_LR_MULT:-1.0}"
 PROMPT_ENCODER_LR_MULT="${PROMPT_ENCODER_LR_MULT:-0.0}"
-PROMPT_ENCODER_TRAIN_MASK_DOWNSCALING="${PROMPT_ENCODER_TRAIN_MASK_DOWNSCALING:-${UNFREEZE_MASK_DOWNSCALING:-0}}"
-case "${PROMPT_ENCODER_TRAIN_MASK_DOWNSCALING}" in
-  0|1) ;;
-  *) echo "PROMPT_ENCODER_TRAIN_MASK_DOWNSCALING must be 0 or 1, got ${PROMPT_ENCODER_TRAIN_MASK_DOWNSCALING}" >&2; exit 2 ;;
-esac
 SHAPE_PRIOR_LR_MULT="${SHAPE_PRIOR_LR_MULT:-1.0}"
-SHAPE_CONTEXT_FUSION="${SHAPE_CONTEXT_FUSION:-roi_only}"
-case "${SHAPE_CONTEXT_FUSION}" in
-  roi_only|gated_spatial_film|legacy_multiplicative) ;;
-  *)
-    echo "SHAPE_CONTEXT_FUSION must be roi_only, gated_spatial_film or legacy_multiplicative, got ${SHAPE_CONTEXT_FUSION}" >&2
-    exit 2
-    ;;
-esac
 P2_BOUNDARY_REFINER_LR_MULT="${P2_BOUNDARY_REFINER_LR_MULT:-1.0}"
 P2_BOUNDARY_REFINER_PROJECTED_CHANNELS="${P2_BOUNDARY_REFINER_PROJECTED_CHANNELS:-64}"
 P2_BOUNDARY_REFINER_MID_CHANNELS="${P2_BOUNDARY_REFINER_MID_CHANNELS:-64}"
@@ -268,15 +207,6 @@ EMA_EVAL_START_EPOCH="${EMA_EVAL_START_EPOCH:-5}"
 SHAPE_POINT_ADAPTIVE_VALIDITY="${SHAPE_POINT_ADAPTIVE_VALIDITY:-1}"
 SHAPE_LOSS_SCHEDULE_MODE="${SHAPE_LOSS_SCHEDULE_MODE:-fixed}"
 SHAPE_PRIOR_LOSS_WEIGHT="${SHAPE_PRIOR_LOSS_WEIGHT:-0.10}"
-FINAL_MASK_LOSS_MODE="${FINAL_MASK_LOSS_MODE:-standard}"
-case "${FINAL_MASK_LOSS_MODE}" in
-  standard|roi_balanced_dice) ;;
-  *) echo "FINAL_MASK_LOSS_MODE must be standard or roi_balanced_dice, got ${FINAL_MASK_LOSS_MODE}" >&2; exit 2 ;;
-esac
-FINAL_MASK_ROI_EXPAND_RATIO="${FINAL_MASK_ROI_EXPAND_RATIO:-1.20}"
-FINAL_MASK_ROI_BCE_WEIGHT="${FINAL_MASK_ROI_BCE_WEIGHT:-1.0}"
-FINAL_MASK_ROI_DICE_WEIGHT="${FINAL_MASK_ROI_DICE_WEIGHT:-1.0}"
-FINAL_MASK_OUTSIDE_BCE_WEIGHT="${FINAL_MASK_OUTSIDE_BCE_WEIGHT:-0.05}"
 SHAPE_LOSS_STAGE1_END="${SHAPE_LOSS_STAGE1_END:-5}"
 SHAPE_LOSS_WEIGHT_STAGE1="${SHAPE_LOSS_WEIGHT_STAGE1:-0.20}"
 SHAPE_LOSS_WEIGHT_STAGE2="${SHAPE_LOSS_WEIGHT_STAGE2:-0.10}"
@@ -295,12 +225,8 @@ RUN_IN_BACKGROUND="${RUN_IN_BACKGROUND:-1}"
 export CUDA_VISIBLE_DEVICES
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export SHAPE_POINT_ADAPTIVE_VALIDITY
-export SHAPE_CONTEXT_FUSION
 export SHAPE_LOSS_SCHEDULE_MODE
 export SHAPE_PRIOR_LOSS_WEIGHT
-export FINAL_MASK_LOSS_MODE FINAL_MASK_ROI_EXPAND_RATIO
-export FINAL_MASK_ROI_BCE_WEIGHT FINAL_MASK_ROI_DICE_WEIGHT
-export FINAL_MASK_OUTSIDE_BCE_WEIGHT
 export SHAPE_LOSS_STAGE1_END
 export SHAPE_LOSS_WEIGHT_STAGE1
 export SHAPE_LOSS_WEIGHT_STAGE2
@@ -312,9 +238,7 @@ export P2_BOUNDARY_REFINER_ENABLED P2_BOUNDARY_REFINER_PROJECTED_CHANNELS
 export P2_BOUNDARY_REFINER_MID_CHANNELS P2_BOUNDARY_REFINER_DELTA_LOGIT_MAX
 export P2_BOUNDARY_REFINER_LOSS_WEIGHT
 export SAVE_BBOX_BEST_METRIC
-export SEGM_SCORE_MODE
 export PROMPT_ENCODER_LR_MULT
-export PROMPT_ENCODER_TRAIN_MASK_DOWNSCALING
 
 RUN_TAG="${RUN_TAG:-${ABLATION_ID}}"
 EXPECTED_ARCHITECTURE_ID="${EXPECTED_ARCHITECTURE_ID:-${ABLATION_ID}}"
@@ -348,10 +272,7 @@ VALIDATE_ARGS=(
   --explicit-prompt-mode "${EXPECTED_EXPLICIT_MODE}"
   --p2-boundary-refiner-enabled "${P2_BOUNDARY_REFINER_ENABLED}"
   --expected-final-mask-mode "${FINAL_MASK_COORDINATE_MODE}"
-  --expected-final-mask-loss-mode "${FINAL_MASK_LOSS_MODE}"
-  --expected-roi-sam-enabled "${ROI_SAM_ENABLED}"
   --expected-image-embed-stride "${SAM_IMAGE_EMBED_STRIDE}"
-  --expected-segm-score-mode "${SEGM_SCORE_MODE}"
   --train-subset-ratio "${TRAIN_SUBSET_RATIO}"
   --val-subset-ratio "${VAL_SUBSET_RATIO}"
   --subset-seed "${SUBSET_SEED}"
@@ -471,13 +392,6 @@ echo "shape_gaussian_omega=${SHAPE_GAUSSIAN_OMEGA}"
 echo "shape_gaussian_gamma=${SHAPE_GAUSSIAN_GAMMA}"
 echo "p2_boundary_refiner_enabled=${P2_BOUNDARY_REFINER_ENABLED}"
 echo "final_mask_coordinate_mode=${FINAL_MASK_COORDINATE_MODE}"
-echo "final_mask_loss_mode=${FINAL_MASK_LOSS_MODE}"
-echo "final_mask_roi_expand_ratio=${FINAL_MASK_ROI_EXPAND_RATIO}"
-echo "final_mask_roi_bce_weight=${FINAL_MASK_ROI_BCE_WEIGHT}"
-echo "final_mask_roi_dice_weight=${FINAL_MASK_ROI_DICE_WEIGHT}"
-echo "final_mask_outside_bce_weight=${FINAL_MASK_OUTSIDE_BCE_WEIGHT}"
-echo "roi_sam_enabled=${ROI_SAM_ENABLED}"
-echo "roi_sam_sampling_ratio=${ROI_SAM_SAMPLING_RATIO}"
 echo "sam_image_embedding_stride=${SAM_IMAGE_EMBED_STRIDE}"
 echo "sam_image_embedding_size=$((1024 / SAM_IMAGE_EMBED_STRIDE))"
 echo "train_subset_ratio=${TRAIN_SUBSET_RATIO}"
@@ -516,9 +430,7 @@ echo "sat_other_lr_mult=${SAT_OTHER_LR_MULT}"
 echo "mask_decoder_lr_mult=${MASK_DECODER_LR_MULT}"
 echo "no_mask_lr_mult=${NO_MASK_LR_MULT}"
 echo "prompt_encoder_lr_mult=${PROMPT_ENCODER_LR_MULT}"
-echo "prompt_encoder_train_mask_downscaling=${PROMPT_ENCODER_TRAIN_MASK_DOWNSCALING}"
 echo "shape_prior_lr_mult=${SHAPE_PRIOR_LR_MULT}"
-echo "shape_context_fusion=${SHAPE_CONTEXT_FUSION}"
 echo "p2_boundary_refiner_lr_mult=${P2_BOUNDARY_REFINER_LR_MULT}"
 echo "p2_boundary_refiner_projected_channels=${P2_BOUNDARY_REFINER_PROJECTED_CHANNELS}"
 echo "p2_boundary_refiner_mid_channels=${P2_BOUNDARY_REFINER_MID_CHANNELS}"

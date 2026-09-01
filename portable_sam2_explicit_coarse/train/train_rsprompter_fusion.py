@@ -557,7 +557,6 @@ def _build_optimizer(
     prompt_encoder_lr_mult: float = 0.1,
     shape_prior_lr_mult: float = 1.0,
     p2_boundary_refiner_lr_mult: float = 1.0,
-    quality_head_lr_mult: float = 1.0,
     weight_decay: float = 0.05,
 ) -> optim.Optimizer:
     params_sat_backbone = []
@@ -572,8 +571,6 @@ def _build_optimizer(
     names_shape_prior = []
     params_p2_boundary_refiner = []
     names_p2_boundary_refiner = []
-    params_quality_head = []
-    names_quality_head = []
     params_bbox_head = []
     names_bbox_head = []
     params_sat_other = []
@@ -586,12 +583,6 @@ def _build_optimizer(
         if match_name.startswith("backbone.") or match_name.startswith("shared_image_embedding."):
             params_sat_backbone.append(param)
             names_sat_backbone.append(name)
-        elif (
-            "roi_head.mask_head.mask_decoder.decoder.iou_prediction_head" in match_name
-            or "roi_head.mask_head.quality_head" in match_name
-        ):
-            params_quality_head.append(param)
-            names_quality_head.append(name)
         elif "roi_head.mask_head.mask_decoder" in match_name:
             params_mask_decoder.append(param)
             names_mask_decoder.append(name)
@@ -689,15 +680,6 @@ def _build_optimizer(
                 weight_decay,
             )
         )
-    if params_quality_head:
-        param_groups.append(
-            {
-                "params": params_quality_head,
-                "lr": lr * quality_head_lr_mult,
-                "name": "quality_head",
-            }
-        )
-        audit_groups.append(("quality_head", params_quality_head, names_quality_head, lr * quality_head_lr_mult, weight_decay))
     if params_bbox_head:
         param_groups.append(
             {
@@ -849,26 +831,6 @@ class ExponentialMovingAverage:
                 self.ema_state[key] = source.clone()
 
 
-def _get_quality_head(model: torch.nn.Module) -> torch.nn.Module:
-    model_core = model.module if hasattr(model, "module") else model
-    mask_head = getattr(getattr(model_core, "roi_head", None), "mask_head", None)
-    quality_head = getattr(mask_head, "quality_head", None)
-    if quality_head is None:
-        mask_decoder = getattr(mask_head, "mask_decoder", None)
-        decoder = getattr(mask_decoder, "decoder", None)
-        quality_head = getattr(decoder, "iou_prediction_head", None)
-    if quality_head is None or not getattr(mask_head, "quality_head_enabled", False):
-        raise RuntimeError("--train-quality-head-only requires QUALITY_HEAD_ENABLED=1")
-    return quality_head
-
-
-def _set_quality_head_only_train_mode(model: torch.nn.Module) -> None:
-    """Keep C2 deterministic while training the native SAM2 quality head."""
-    model_core = model.module if hasattr(model, "module") else model
-    model_core.eval()
-    _get_quality_head(model_core).train()
-
-
 def _log_trainable_state(model: torch.nn.Module):
     model_core = model.module if hasattr(model, "module") else model
     roi_head = getattr(model_core, "roi_head", None)
@@ -883,9 +845,6 @@ def _log_trainable_state(model: torch.nn.Module):
         "p2_boundary_refiner": getattr(
             mask_head, "p2_boundary_refiner", None
         ) if mask_head is not None else None,
-        "quality_head": _get_quality_head(model_core)
-        if mask_head is not None and getattr(mask_head, "quality_head_enabled", False)
-        else None,
     }
     for name, module in checks.items():
         if module is None:
@@ -1195,27 +1154,10 @@ def _load_checkpoint(
             ckpt, expected_architecture, operation="RESUME", allow_cross_arch=False
         )
     model_to_load = model.module if hasattr(model, "module") else model
-    # 审查 3.5：RESUME 续训时模型结构应与当前运行完全一致，默认用 strict=True。
-    # 若 ckpt 是旧结构（新增/删除了模块），strict=True 会失败——此时设置
-    # env RESUME_STRICT=0 回退到宽松模式（仅打印 missing/unexpected 明细）。
-    _resume_strict = os.environ.get("RESUME_STRICT", "1") != "0"
-    if _resume_strict:
-        # strict=True 时 load_state_dict 不返回 msg，missing/unexpected 会直接抛错
-        model_to_load.load_state_dict(ckpt["model"], strict=True)
-        if int(os.environ.get("RANK", "0")) == 0:
-            logger.info("RESUME model load: strict=True (all keys matched)")
-    else:
-        # 问题 13：宽松模式补打 missing/unexpected keys 明细
-        _resume_msg = model_to_load.load_state_dict(ckpt["model"], strict=False)
-        if int(os.environ.get("RANK", "0")) == 0:
-            logger.info(
-                "RESUME model load: strict=False, missing=%d, unexpected=%d",
-                len(_resume_msg.missing_keys), len(_resume_msg.unexpected_keys),
-            )
-            if _resume_msg.missing_keys:
-                logger.info("  missing (first 20): %s", _resume_msg.missing_keys[:20])
-            if _resume_msg.unexpected_keys:
-                logger.info("  unexpected (first 20): %s", _resume_msg.unexpected_keys[:20])
+    # RESUME requires the resumed model structure to match exactly.
+    model_to_load.load_state_dict(ckpt["model"], strict=True)
+    if int(os.environ.get("RANK", "0")) == 0:
+        logger.info("RESUME model load: strict=True (all keys matched)")
     _assert_no_mask_embedding_contract(model_to_load, "RESUME checkpoint load")
     if optimizer is not None and "optimizer" in ckpt:
         optimizer.load_state_dict(ckpt["optimizer"])
@@ -1447,11 +1389,6 @@ def main():
     parser.add_argument("--fsdp-min-num-params", type=int, default=1000000)
 
     parser.add_argument("--freeze-bn", action="store_true")
-    parser.add_argument(
-        "--train-quality-head-only",
-        action="store_true",
-        help="Freeze C2 and optimize only the native SAM2 IoU quality head.",
-    )
 
     parser.add_argument("--val-ratio", type=float, default=0.0)
     parser.add_argument(
@@ -1505,7 +1442,6 @@ def main():
     parser.add_argument("--prompt-encoder-lr-mult", type=float, default=0.1)
     parser.add_argument("--shape-prior-lr-mult", type=float, default=1.0)
     parser.add_argument("--p2-boundary-refiner-lr-mult", type=float, default=1.0)
-    parser.add_argument("--quality-head-lr-mult", type=float, default=1.0)
     parser.add_argument("--grad-accum-steps", type=int, default=2)
     parser.add_argument("--warmup-epochs", type=int, default=0, help="Number of warmup epochs for learning rate scheduling")
     parser.add_argument("--warmup-iters", type=int, default=100, help="Number of warmup optimizer steps (overrides warmup-epochs if > 0)")
@@ -1641,43 +1577,13 @@ def main():
     model = MODELS.build(cfg.model)
     model.to(device)
 
-    exclusive_scopes = sum(
-        int(flag)
-        for flag in (
-            args.train_quality_head_only,
-        )
-    )
-    if exclusive_scopes > 1:
-        raise RuntimeError(
-            "Experimental module-only training scopes are mutually exclusive"
-        )
-    if args.train_quality_head_only:
-        model.requires_grad_(False)
-        quality_head = _get_quality_head(model)
-        quality_head.requires_grad_(True)
-        _set_quality_head_only_train_mode(model)
-        if is_main:
-            model_core = model.module if hasattr(model, "module") else model
-            quality_mask_head = getattr(
-                getattr(model_core, "roi_head", None), "mask_head", None
-            )
-            quality_type = getattr(
-                quality_mask_head, "quality_head_type", "native_iou"
-            )
-            logger.info(
-                "Training scope: quality head only (%s); loaded C2 baseline is frozen in eval mode",
-                quality_type,
-            )
-
     model_for_preproc = model.module if hasattr(model, "module") else model
     data_preprocessor = model_for_preproc.data_preprocessor
     evaluation_mask_head = model_for_preproc.roi_head.mask_head
     segm_score_mode = getattr(evaluation_mask_head, "segm_score_mode", "detector")
     segm_score_key = getattr(evaluation_mask_head, "segm_score_key", "scores")
-    if segm_score_mode not in {"detector", "mask_quality"}:
-        raise RuntimeError(f"Invalid segmentation score mode: {segm_score_mode!r}")
-    if segm_score_key not in {"scores", "mask_scores"}:
-        raise RuntimeError(f"Invalid segmentation score key: {segm_score_key!r}")
+    if segm_score_mode != "detector" or segm_score_key != "scores":
+        raise RuntimeError("segm score contract must be detector/scores")
     if is_main:
         logger.info(
             "Evaluation score contract: bbox=scores segm=%s mode=%s",
@@ -1856,7 +1762,6 @@ def main():
         prompt_encoder_lr_mult=args.prompt_encoder_lr_mult,
         shape_prior_lr_mult=args.shape_prior_lr_mult,
         p2_boundary_refiner_lr_mult=args.p2_boundary_refiner_lr_mult,
-        quality_head_lr_mult=args.quality_head_lr_mult,
         weight_decay=args.weight_decay,
     )
     if is_main:
@@ -1899,15 +1804,10 @@ def main():
     scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
 
     # === 构建训练 config 快照 (保存到 checkpoint, 推理时可直接加载) ===
-    eval_bbox = _env_flag("EVAL_BBOX", "1")
     # Historical WHU1024 baseline reports/selects bbox/mAP as its primary bbox
     # metric.  Keep mAP_75 in the detailed metrics, but do not silently use it
     # as the headline or best-bbox checkpoint criterion.
     save_bbox_best_metric = os.environ.get("SAVE_BBOX_BEST_METRIC", "bbox/mAP")
-    save_composite_best = _env_flag("SAVE_COMPOSITE_BEST", "0")
-    composite_metric_spec = os.environ.get(
-        "SAVE_COMPOSITE_WEIGHTS", "0.5*bbox/mAP_75+0.5*segm/mAP_75"
-    )
     early_stopping_metric_spec = os.environ.get(
         "EARLY_STOPPING_METRIC", "segm/mAP"
     )
@@ -1972,10 +1872,7 @@ def main():
         "prompt_mode": os.environ.get("PROMPT_MODE", ""),
         "neck_type": os.environ.get("NECK_TYPE", ""),
         "prompt_dense_mode": os.environ.get("PROMPT_DENSE_MODE", ""),
-        "eval_bbox": int(eval_bbox),
         "save_bbox_best_metric": save_bbox_best_metric,
-        "save_composite_best": int(save_composite_best),
-        "composite_metric_spec": composite_metric_spec,
         "early_stopping_metric_spec": early_stopping_metric_spec,
         "early_stopping_patience": int(args.early_stopping_patience),
         "early_stopping_start_epoch": int(args.early_stopping_start_epoch),
@@ -2027,14 +1924,6 @@ def main():
         "p2_boundary_refiner": dict(
             resolved_mask_head_cfg.get("p2_boundary_refiner_cfg", {})
         ),
-        "train_quality_head_only": int(args.train_quality_head_only),
-        "quality_head_enabled": os.environ.get("QUALITY_HEAD_ENABLED", "0"),
-        "quality_head_type": os.environ.get("QUALITY_HEAD_TYPE", "native_iou"),
-        "quality_head_loss_weight": os.environ.get("QUALITY_HEAD_LOSS_WEIGHT", "1.0"),
-        "quality_head_loss_beta": os.environ.get("QUALITY_HEAD_LOSS_BETA", "0.1"),
-        "quality_head_score_alpha": os.environ.get("QUALITY_HEAD_SCORE_ALPHA", "0.5"),
-        "quality_head_hidden_dim": os.environ.get("QUALITY_HEAD_HIDDEN_DIM", "256"),
-        "quality_head_detach_inputs": os.environ.get("QUALITY_HEAD_DETACH_INPUTS", "1"),
         "bbox_arch": os.environ.get("AP75_BBOX_ARCH", ""),
         "bbox_iou_loss_weight": os.environ.get("AP75_BBOX_IOU_LOSS_WEIGHT", ""),
         "init_from": args.init_from or "",
@@ -2076,7 +1965,6 @@ def main():
     best_train_loss = float("inf")
     best_segm_map = 0.0  # Track best segm mAP
     best_bbox_score = 0.0
-    best_composite_score = 0.0
     best_early_stopping_score = float("-inf")
     early_counter = 0
     early_stopping_metric_history = []
@@ -2144,7 +2032,6 @@ def main():
         best_train_loss = float(best.get("best_train_loss", best_train_loss))
         best_segm_map = float(best.get("best_segm_map", best_segm_map))
         best_bbox_score = float(best.get("best_bbox_score", best_bbox_score))
-        best_composite_score = float(best.get("best_composite_score", best_composite_score))
         best_early_stopping_score = float(
             best.get("best_early_stopping_score", best_early_stopping_score)
         )
@@ -2173,12 +2060,11 @@ def main():
                 )
         if is_main:
             logger.info(
-                "Resumed from %s (start_epoch=%d, best_segm_map=%.4f, best_bbox_score=%.4f, best_composite_score=%.4f)",
+                "Resumed from %s (start_epoch=%d, best_segm_map=%.4f, best_bbox_score=%.4f)",
                 args.resume_from,
                 start_epoch,
                 best_segm_map,
                 best_bbox_score,
-                best_composite_score,
             )
 
     # ===== --test-only: evaluate on the held-out WHU test split, then exit =====
@@ -2342,7 +2228,7 @@ def main():
                 coco_gt, coco_bbox_dt = build_coco_gt_and_dt(
                     all_gt, all_dt, all_img_metas, score_key="scores"
                 )
-                if eval_bbox:
+                if True:
                     bbox_metrics = run_coco_eval(
                         coco_gt, coco_bbox_dt, iou_type="bbox",
                         max_dets=_test_eval_max_dets,
@@ -2377,8 +2263,7 @@ def main():
                 # Full COCO stat dump: every metric key of both evals, plus a
                 # test_metrics.json next to the checkpoint dir for scripting.
                 _full_test_metrics = {}
-                if eval_bbox:
-                    _full_test_metrics.update(bbox_metrics)
+                _full_test_metrics.update(bbox_metrics)
                 _full_test_metrics.update(segm_metrics)
                 for _mk, _mv in _full_test_metrics.items():
                     logger.info("Test metric %s: %.6f", _mk, float(_mv))
@@ -2499,9 +2384,7 @@ def main():
                 sampler.set_epoch(epoch)
 
         model.train()
-        if args.train_quality_head_only:
-            _set_quality_head_only_train_mode(model)
-        elif args.freeze_bn:
+        if args.freeze_bn:
             _set_norm_eval(model)
 
         total_loss = 0.0
@@ -2599,14 +2482,14 @@ def main():
                     if "loss" not in k:
                         continue
                     if isinstance(v, torch.Tensor):
-                        if not args.train_quality_head_only or v.requires_grad:
+                        if v.requires_grad:
                             loss_parts.append(v)
                     elif isinstance(v, (list, tuple)):
                         loss_parts.extend(
                             x
                             for x in v
                             if isinstance(x, torch.Tensor)
-                            and (not args.train_quality_head_only or x.requires_grad)
+                            and (x.requires_grad)
                         )
                 loss = sum(loss_parts) if loss_parts else torch.tensor(0.0, device=device)
                 # 审查 3.6 / 问题 10：loss 归一化按当前 batch 所属 accumulation group 的
@@ -2644,7 +2527,7 @@ def main():
                         name
                         for name, value in loss_dict.items()
                         if isinstance(value, torch.Tensor)
-                        and (not args.train_quality_head_only or value.requires_grad)
+                        and (value.requires_grad)
                         and not torch.isfinite(value).all()
                     ]
                     logger.error(
@@ -3071,7 +2954,7 @@ def main():
                 coco_gt, coco_bbox_dt = build_coco_gt_and_dt(
                     all_gt, all_dt, all_img_metas, score_key="scores"
                 )
-                if eval_bbox:
+                if True:
                     bbox_metrics = run_coco_eval(
                         coco_gt, coco_bbox_dt, iou_type="bbox",
                         max_dets=_val_max_dets,
@@ -3101,37 +2984,6 @@ def main():
                     segm_metrics.get("segm/mAP", 0.0),
                 )
 
-                # Optional compatibility metric at a second maxDets setting.
-                # Used by accelerated runs whose primary eval runs at a
-                # non-default maxDets (TEST_MAX_PER_IMG) but that still need a
-                # curve directly comparable with historical maxDets=100 logs.
-                # Stored under suffixed keys so best-model/early-stop lookups
-                # on the plain "segm/mAP" key are unaffected.
-                compat_max_dets = int(os.environ.get("VAL_COMPAT_MAX_DETS", "0") or 0)
-                if compat_max_dets > 0:
-                    for _iou_type, _dt in (
-                        ("bbox", coco_bbox_dt),
-                        ("segm", coco_segm_dt),
-                    ):
-                        _compat = run_coco_eval(
-                            coco_gt,
-                            _dt,
-                            iou_type=_iou_type,
-                            max_dets=[1, 10, compat_max_dets],
-                        )
-                        val_metrics.update(
-                            {
-                                f"{k}@md{compat_max_dets}": v
-                                for k, v in _compat.items()
-                            }
-                        )
-                        logger.info(
-                            "Validation %s/mAP@maxDet%d: %.4f",
-                            _iou_type,
-                            compat_max_dets,
-                            _compat.get(f"{_iou_type}/mAP", 0.0),
-                        )
-
         # Match the baseline's post-validation cleanup and reduce allocator
         # fragmentation across long runs.  Non-main ranks reach this point
         # early and then wait at the existing epoch-end DDP synchronization.
@@ -3157,10 +3009,8 @@ def main():
             # Check if this is the best model based on segm/mAP
             is_best = False
             is_bbox_best = False
-            is_composite_best = False
             current_segm_map = 0.0
             current_bbox_score = None
-            current_composite_score = None
             if val_metrics is not None and "segm/mAP" in val_metrics:
                 current_segm_map = val_metrics["segm/mAP"]
                 if current_segm_map > best_segm_map:
@@ -3175,20 +3025,6 @@ def main():
                     best_bbox_score = current_bbox_score
                     is_bbox_best = True
                     logger.info("New best %s: %.4f", save_bbox_best_metric, best_bbox_score)
-
-            if val_metrics is not None and save_composite_best:
-                current_composite_score = _weighted_metric_value(val_metrics, composite_metric_spec)
-                if (
-                    current_composite_score is not None
-                    and current_composite_score > best_composite_score
-                ):
-                    best_composite_score = current_composite_score
-                    is_composite_best = True
-                    logger.info(
-                        "New best composite (%s): %.4f",
-                        composite_metric_spec,
-                        best_composite_score,
-                    )
 
             current_early_stopping_score = None
             if val_metrics is not None:
@@ -3260,8 +3096,6 @@ def main():
                 "best_segm_map": best_segm_map,
                 "best_bbox_score": best_bbox_score,
                 "best_bbox_metric": save_bbox_best_metric,
-                "best_composite_score": best_composite_score,
-                "best_composite_metric": composite_metric_spec,
                 "best_early_stopping_score": best_early_stopping_score,
                 "early_stopping_metric": early_stopping_metric_spec,
                 "early_counter": int(early_counter),
@@ -3303,23 +3137,6 @@ def main():
                     "best_bbox_model",
                     save_bbox_best_metric,
                     current_bbox_score,
-                    epoch,
-                    model,
-                    optimizer,
-                    scheduler,
-                    best_metrics,
-                    history,
-                    config_snapshot,
-                    scaler,
-                    ema_state=ema_state_to_save,
-                )
-
-            if is_composite_best and current_composite_score is not None:
-                _save_verified_best_checkpoint(
-                    checkpoint_dir,
-                    "best_composite_model",
-                    composite_metric_spec,
-                    current_composite_score,
                     epoch,
                     model,
                     optimizer,
@@ -3380,26 +3197,19 @@ def main():
                     if current_bbox_score is not None
                     else ""
                 )
-                composite_info = (
-                    f" composite={current_composite_score:.4f}"
-                    if current_composite_score is not None
-                    else ""
-                )
                 val_info = (
                     f"{val_loss:.6f}" if val_loss is not None else "disabled"
                 )
                 logger.info(
-                    "Epoch %d/%d | train=%.6f val=%s%s%s%s | best_segm=%.4f best_bbox=%.4f best_comp=%.4f | %s",
+                    "Epoch %d/%d | train=%.6f val=%s%s%s | best_segm=%.4f best_bbox=%.4f | %s",
                     epoch + 1,
                     args.epochs,
                     avg_loss,
                     val_info,
                     segm_info,
                     bbox_info,
-                    composite_info,
                     best_segm_map,
                     best_bbox_score,
-                    best_composite_score,
                     lr_str,
                 )
             else:

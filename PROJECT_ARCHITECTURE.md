@@ -1,5 +1,20 @@
 # Portable SAM2 Explicit Coarse：项目架构与文件指南
 
+> **2026-09-01 范围收敛声明（优先级高于下文历史描述）**：本项目已收敛为
+> 单分辨率、单流 WHU 的最小主线。以下路线/特性已从代码删除，正文中对它们的
+> 描述仅作历史参考：SAM image embedding stride 32（32×32）路线及其 B0/B1/
+> M0/M1/C1–C4 全部 wrapper（MLP 基线仅保留 stride-16 的
+> `r0_b0_aggregator_mlp_emb64`）；FiLM / SHAPE_CONTEXT_FUSION
+> （`gated_spatial_film`、`legacy_multiplicative`）；C2-L（ROI 聚焦
+> final-mask loss）与 C2-R（ROI-SAM2 特征裁剪）；quality head 全链路与
+> `mask_quality` 评分模式（segm 排序固定 detector score）；PromptEncoder
+> mask_downscaling 解冻（densefix 配置删除）；coarse_strategy 与
+> prompt_content_p2 实验线；mask head 的 forward 诊断消融开关；trainer 休眠
+> 开关 `EVAL_BBOX`/`SAVE_COMPOSITE_*`/`RESUME_STRICT`/`VAL_COMPAT_MAX_DETS`。
+> 存活矩阵：r0（MLP 基线）、r1_c3、r1_c4、r1_c4_rd（±roi_local）、r1_c4_g、
+> c5v2、paper_promptminer_rd_p2_whu_full(±fast)，全部固定 stride 16。
+> 本节的路线/消融描述若与上述冲突，以本声明和 §8 最新记录为准。
+
 本文档是新派生项目的结构、接线和使用说明，也是后续代码变更的同步文档。
 凡是新增、删除、重命名文件，或改变模型接线、配置参数、训练入口、数据协议、
 实验矩阵和验证方式，都应在同一次改动中更新本文档。
@@ -193,7 +208,6 @@ final-mask 坐标契约，M0→C1、M1→C2 才是在相同 full-image 契约下
 | `rsprompter_anchor_satS_v11_sam2_large_full.py` | 继承自旧项目的完整 MMEngine 基础配置，定义 detector、RPN、RoI head、优化相关默认值。 |
 | `whu1024_baseplus_clean.py` | WHU-1024 / SAM2 Base+ 的干净桥接基线；通过 `NECK_TYPE` 切换 aggregator/PAFPN，默认使用旧 MLP prompt 路线。 |
 | `whu1024_baseplus_explicit_coarse.py` | 显式 coarse 主配置；选择 points、points+box、points+box+dense，并解析可选 P2BoundaryRefiner。 |
-| `whu1024_baseplus_explicit_coarse_densefix.py` | 继承显式 coarse 主配置，只覆盖固定 dense 系数，并按显式开关把 mask-downscaling trainability 解析进 `cfg.model`。 |
 
 配置继承关系：
 
@@ -760,6 +774,24 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 处理本项目的新增或改动时，它负责默认执行上述同步流程。
 
 ## 8. 文档同步记录
+
+- 2026-09-01：按新项目口径执行 B 级路线清理（均经确认）。固定
+  `SAM_IMAGE_EMBED_STRIDE=16`（clean/coarse 配置与 runner 去除该 env）；
+  删除 stride-32 全部 wrapper（B0/B1/M0/M1/C1–C4 系列）并将 MLP 基线收敛为
+  `r0_b0_aggregator_mlp_emb64`；`ShapePriorInjector` 移除全部 FiLM/context
+  分支（仅 `roi_only`）；删除 C2-L（`final_mask_loss_cfg` 的
+  `roi_balanced_dice` 路径与 `get_final_mask_roi_support`/
+  `roi_balanced_final_mask_loss`）与 C2-R（`roi_sam_cfg` 裁剪路径）；删除
+  quality head 全链路（`--train-quality-head-only`、`quality_head_cfg`、
+  `mask_quality` 评分，segm 排序固定 detector score）；删除
+  PromptEncoder `train_mask_downscaling` 解冻与 densefix 配置；删除
+  coarse_strategy 与 prompt_content_p2 实验线及 B0 监视器；删除 mask head
+  的 `_diagnostic_*` 诊断开关与 trainer 休眠 env（`EVAL_BBOX`、
+  `SAVE_COMPOSITE_*`、`RESUME_STRICT`、`VAL_COMPAT_MAX_DETS`，
+  composite best 一并移除）。`architecture_contract.py` 的 ID 空间与
+  `validate_ablation_contract.py`、`smoke_all.sh`、`_run_ablation.sh`
+  同步收缩。旧 stride-32 checkpoint 不再支持 RESUME/同架构 INIT（除非
+  显式 `--allow-cross-arch-init`），checkpoint 推理入口保留兼容读取。
 
 - 2026-09-01：A 级孤儿代码清理（无行为变化）。删除 `rsprompter/models.py` 中
   无任何 config 引用的 SAM1 遗留链（`RSPrompterAnchorMaskHead`、`RSSam*` 四件套、

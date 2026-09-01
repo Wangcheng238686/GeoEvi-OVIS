@@ -28,7 +28,6 @@ export NECK_TYPE="pafpn"
 export PROMPT_ROUTE="coarse"
 export EXPLICIT_PROMPT_MODE="points_box_dense"
 export P2_BOUNDARY_REFINER_ENABLED=0
-export SAM_IMAGE_EMBED_STRIDE=16
 export SHAPE_DENSE_TRANSFORM="raw_logits"
 export SHAPE_DENSE_DETACH=1
 export SAM2_MODEL_SIZE=base_plus
@@ -37,11 +36,9 @@ export SAM2_MODEL_SIZE=base_plus
 # roi_local contract used by the WHU R1-C4-RD-roi_local baseline.
 export FINAL_MASK_COORDINATE_MODE="roi_local"
 # coarse route model config (architecture-only; data comes from CLI below).
-export SHAPE_CONTEXT_FUSION="roi_only"
 export SHAPE_POINT_ADAPTIVE_VALIDITY=1
 export SHAPE_LOSS_SCHEDULE_MODE="fixed"
 export SHAPE_PRIOR_LOSS_WEIGHT=0.10
-export SEGM_SCORE_MODE=detector
 # ue_coco is its own dataset; subset ratios default to full (1.0) since the
 # clean split is already small (886/189/183 images).
 export TRAIN_SUBSET_RATIO="${TRAIN_SUBSET_RATIO:-1.0}"
@@ -110,8 +107,7 @@ VALIDATE_ARGS=(
   --expected-final-mask-mode "roi_local"
   --expected-final-mask-loss-mode "standard"
   --expected-roi-sam-enabled "0"
-  --expected-image-embed-stride "${SAM_IMAGE_EMBED_STRIDE}"
-  --expected-segm-score-mode "${SEGM_SCORE_MODE}"
+  --expected-image-embed-stride 16
   --train-subset-ratio "${TRAIN_SUBSET_RATIO}"
   --val-subset-ratio "${VAL_SUBSET_RATIO}"
   --subset-seed "${SUBSET_SEED}"

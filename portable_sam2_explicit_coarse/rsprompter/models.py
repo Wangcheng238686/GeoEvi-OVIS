@@ -590,63 +590,6 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
         mask_results["loss_mask"].update(
             mask_loss_and_target.get("debug_stats", {})
         )
-        if getattr(self.mask_head, "quality_head_enabled", False):
-            mask_targets = mask_loss_and_target["mask_targets"]
-            quality_preds = mask_results["quality_predictions"]
-            resized_mask_preds = F.interpolate(
-                mask_results["mask_preds"],
-                size=mask_targets.shape[-2:],
-                mode="bilinear",
-                align_corners=False,
-            )
-            pos_labels = torch.cat(
-                [res.pos_gt_labels for res in sampling_results]
-            )
-            if self.mask_head.class_agnostic:
-                selected_mask_preds = resized_mask_preds[:, 0]
-                selected_quality_preds = quality_preds[:, 0]
-            else:
-                row = torch.arange(pos_labels.shape[0], device=pos_labels.device)
-                mask_columns = pos_labels.clamp_max(resized_mask_preds.shape[1] - 1)
-                quality_columns = pos_labels.clamp_max(quality_preds.shape[1] - 1)
-                selected_mask_preds = resized_mask_preds[row, mask_columns]
-                selected_quality_preds = quality_preds[row, quality_columns]
-
-            with torch.no_grad():
-                target = mask_targets.float()
-                mask_probability = torch.sigmoid(selected_mask_preds.float())
-                target_mask = mask_probability
-                if self.mask_head.quality_head_type == "ap_ordinal":
-                    target_mask = (mask_probability >= 0.5).to(target.dtype)
-                intersection = (target_mask * target).flatten(1).sum(1)
-                union = (
-                    target_mask.flatten(1).sum(1)
-                    + target.flatten(1).sum(1)
-                    - intersection
-                )
-                quality_targets = (intersection / union.clamp_min(1e-6)).clamp(0, 1)
-
-            if self.mask_head.quality_head_type == "ap_ordinal":
-                thresholds = selected_quality_preds.new_tensor(
-                    self.mask_head.quality_head.thresholds
-                )
-                ordinal_targets = (
-                    quality_targets[:, None] >= thresholds[None]
-                ).to(selected_quality_preds.dtype)
-                quality_loss = F.binary_cross_entropy_with_logits(
-                    selected_quality_preds.float(), ordinal_targets.float()
-                )
-            else:
-                quality_loss = F.smooth_l1_loss(
-                    selected_quality_preds.float(),
-                    quality_targets,
-                    beta=self.mask_head.quality_head_loss_beta,
-                )
-            mask_results["loss_mask_quality"] = {
-                "loss_mask_quality": self.mask_head.quality_head_loss_weight
-                * quality_loss
-            }
-
         # === ROI-local coarse-mask supervision ===
         # CoarseMaskLoss operates at the prediction's native resolution. Binary
         # GT crops are resized with nearest-neighbour interpolation, and the
@@ -767,17 +710,6 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
             losses.update(mask_results["loss_mask"])
             if "loss_shape_prior" in mask_results:
                 losses.update(mask_results["loss_shape_prior"])
-            for loss_name in (
-                "loss_mask_quality",
-            ):
-                if loss_name in mask_results:
-                    losses.update(mask_results[loss_name])
-            for loss_name, loss_value in mask_results.items():
-                if (
-                    loss_name.startswith("loss_roi_")
-                    and isinstance(loss_value, dict)
-                ):
-                    losses.update(loss_value)
             refiner = getattr(self.mask_head, "p2_boundary_refiner", None)
             if refiner is not None:
                 zero = x[0].sum() * 0.0
@@ -818,7 +750,6 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
         chunk_size = int(getattr(self, "mask_roi_chunk_size", 32) or 0)
         if chunk_size > 0 and mask_rois.shape[0] > chunk_size:
             mask_preds_parts = []
-            quality_parts = []
             for start in range(0, mask_rois.shape[0], chunk_size):
                 chunk_results = self._mask_forward(
                     x,
@@ -828,9 +759,7 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
                     high_res_features=high_res_features,
                 )
                 mask_preds_parts.append(chunk_results["mask_preds"])
-                quality_parts.append(chunk_results["quality_predictions"])
             mask_preds = torch.cat(mask_preds_parts, dim=0)
-            quality_preds = torch.cat(quality_parts, dim=0)
         else:
             mask_results = self._mask_forward(
                 x,
@@ -840,10 +769,8 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
                 high_res_features=high_res_features,
             )
             mask_preds = mask_results["mask_preds"]
-            quality_preds = mask_results["quality_predictions"]
         num_mask_rois_per_img = [len(res) for res in results_list]
         mask_preds = mask_preds.split(num_mask_rois_per_img, 0)
-        quality_preds = quality_preds.split(num_mask_rois_per_img, 0)
 
         results_list = self.mask_head.predict_by_feat(
             mask_preds=mask_preds,
@@ -852,18 +779,6 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
             rcnn_test_cfg=self.test_cfg,
             rescale=rescale,
         )
-        if getattr(self.mask_head, "quality_head_enabled", False):
-            alpha = self.mask_head.quality_head_score_alpha
-            for result, quality in zip(results_list, quality_preds):
-                quality = quality[:, 0].float()
-                if self.mask_head.quality_head_type == "ap_ordinal":
-                    quality_levels = torch.sigmoid(quality)
-                    result.mask_quality_levels = quality_levels
-                    quality = quality_levels.mean(dim=-1)
-                else:
-                    quality = quality.clamp(0.0, 1.0)
-                result.mask_quality = quality
-                result.mask_scores = result.scores * quality.pow(alpha)
         return results_list
 
     def predict(

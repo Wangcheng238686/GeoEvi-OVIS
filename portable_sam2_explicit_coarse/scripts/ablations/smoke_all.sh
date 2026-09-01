@@ -12,23 +12,12 @@ if [[ -e "${SMOKE_LOG_SENTINEL}" ]]; then
 fi
 export LOG_FILE="${SMOKE_LOG_SENTINEL}"
 MATRIX=(
-  b0_aggregator_mlp.sh
-  b1_pafpn_mlp.sh
-  m0_aggregator_mlp_full_image.sh
-  m1_pafpn_mlp_full_image.sh
-  c1_aggregator_coarse_points.sh
-  c2_pafpn_coarse_points.sh
-  c2l_pafpn_coarse_points_roi_loss.sh
-  c2r_pafpn_coarse_points_roi_sam.sh
-  c3_pafpn_coarse_points_box.sh
-  c4_pafpn_coarse_points_box_dense.sh
-  c4_pafpn_coarse_points_box_dense_densefix.sh
-  c4_pafpn_coarse_points_box_dense_densefix_unfreeze.sh
+  r0_b0_aggregator_mlp_emb64.sh
   r1_c3_pafpn_coarse_points_box_emb64.sh
   r1_c4_pafpn_coarse_points_box_dense_emb64.sh
   r1_c4_rd_pafpn_coarse_points_box_raw_detach_emb64.sh
+  r1_c4_rd_pafpn_coarse_points_box_raw_detach_roi_local_emb64.sh
   r1_c4_g_pafpn_coarse_points_box_gaussian_emb64.sh
-  r0_b0_aggregator_mlp_emb64.sh
   c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
 )
 
@@ -57,46 +46,30 @@ for script in "${MATRIX[@]}"; do
   grep -q '^cuda_visible_devices=1,2$' <<<"${smoke_output}"
   grep -q '^grad_accum_steps=4$' <<<"${smoke_output}"
   grep -q '^effective_global_batch_size=8$' <<<"${smoke_output}"
+  grep -q '^sam_image_embedding_stride=16$' <<<"${smoke_output}"
   grep -Fq "environment_config=${PORTABLE_SAM2_ENV_FILE}" <<<"${smoke_output}"
-  if [[ "${script}" == "c4_pafpn_coarse_points_box_dense_densefix_unfreeze.sh" ]]; then
-    grep -q '^prompt_encoder_train_mask_downscaling=1$' <<<"${smoke_output}"
-    grep -q '^prompt_encoder_lr_mult=1.0$' <<<"${smoke_output}"
-    grep -q '"prompt_encoder_train_mask_downscaling": true' <<<"${smoke_output}"
-  else
-    grep -q '^prompt_encoder_train_mask_downscaling=0$' <<<"${smoke_output}"
-  fi
-  # Verify the final-mask coordinate contract resolves correctly.  M0/M1 are
-  # the committed full_image controls; everything else defaults to roi_local
-  # (the full_image default was switched after the supervision-collapse
-  # diagnosis).  Catch a silent coordinate-mode regression, not just a print.
+  # The final-mask coordinate contract is roi_local across the whole matrix
+  # after the stride-32 legacy route was removed.
+  grep -q '^final_mask_coordinate_mode=roi_local$' <<<"${smoke_output}"
+  grep -q '"final_mask_coordinate_mode": "roi_local"' <<<"${smoke_output}"
   case "${script}" in
-    m0_aggregator_mlp_full_image.sh|m1_pafpn_mlp_full_image.sh)
-      grep -q '^final_mask_coordinate_mode=full_image$' <<<"${smoke_output}"
-      grep -q '"final_mask_coordinate_mode": "full_image"' <<<"${smoke_output}"
+    r0_b0_aggregator_mlp_emb64.sh)
+      grep -q '^explicit_prompt_mode=none$' <<<"${smoke_output}"
       ;;
-    *)
-      grep -q '^final_mask_coordinate_mode=roi_local$' <<<"${smoke_output}"
-      grep -q '"final_mask_coordinate_mode": "roi_local"' <<<"${smoke_output}"
-      ;;
-  esac
-  case "${script}" in
     r1_c3_pafpn_coarse_points_box_emb64.sh)
       grep -q '^explicit_prompt_mode=points_box$' <<<"${smoke_output}"
       grep -q '^p2_boundary_refiner_enabled=0$' <<<"${smoke_output}"
-      grep -q '^sam_image_embedding_stride=16$' <<<"${smoke_output}"
       grep -q '"dense_prompt_enabled": false' <<<"${smoke_output}"
       ;;
     r1_c4_pafpn_coarse_points_box_dense_emb64.sh)
       grep -q '^explicit_prompt_mode=points_box_dense$' <<<"${smoke_output}"
       grep -q '^p2_boundary_refiner_enabled=0$' <<<"${smoke_output}"
-      grep -q '^sam_image_embedding_stride=16$' <<<"${smoke_output}"
       grep -q '"dense_prompt_enabled": true' <<<"${smoke_output}"
       ;;
     r1_c4_rd_pafpn_coarse_points_box_raw_detach_emb64.sh)
       grep -q '^explicit_prompt_mode=points_box_dense$' <<<"${smoke_output}"
       grep -q '^shape_dense_transform=raw_logits$' <<<"${smoke_output}"
       grep -q '^shape_dense_detach=1$' <<<"${smoke_output}"
-      grep -q '^sam_image_embedding_stride=16$' <<<"${smoke_output}"
       grep -q '"detach_input": true' <<<"${smoke_output}"
       grep -q '"transform": "raw_logits"' <<<"${smoke_output}"
       ;;
@@ -107,46 +80,20 @@ for script in "${MATRIX[@]}"; do
       grep -q '^shape_gaussian_foreground_threshold=0.5$' <<<"${smoke_output}"
       grep -q '^shape_gaussian_omega=15.0$' <<<"${smoke_output}"
       grep -q '^shape_gaussian_gamma=4.0$' <<<"${smoke_output}"
-      grep -q '^sam_image_embedding_stride=16$' <<<"${smoke_output}"
       grep -q '"clamp_range": null' <<<"${smoke_output}"
       grep -q '"transform": "gaussian_edt"' <<<"${smoke_output}"
       ;;
     c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh)
       grep -q '^explicit_prompt_mode=points_box_dense$' <<<"${smoke_output}"
       grep -q '^p2_boundary_refiner_enabled=1$' <<<"${smoke_output}"
-      grep -q '^sam_image_embedding_stride=16$' <<<"${smoke_output}"
       grep -q '"dense_prompt_enabled": true' <<<"${smoke_output}"
       ;;
   esac
 done
 
-echo "[3b/5] single-content prompt x P2 matrix contracts"
-for content in point box mask; do
-  for p2 in 0 1; do
-    echo "---- prompt_content_${content}_p2_${p2}"
-    smoke_output="$(DRY_RUN=1 CHECK_DATA=0 PREFLIGHT_MODEL=0 \
-      bash "${SCRIPT_DIR}/prompt_content_p2_from_r1_best.sh" \
-      "${content}" "${p2}")"
-    printf '%s\n' "${smoke_output}"
-    expected_mode="${content}"
-    [[ "${content}" == "point" ]] && expected_mode="points"
-    grep -q "^explicit_prompt_mode=${expected_mode}$" <<<"${smoke_output}"
-    grep -q "^p2_boundary_refiner_enabled=${p2}$" <<<"${smoke_output}"
-    grep -q '^sam_image_embedding_stride=16$' <<<"${smoke_output}"
-    grep -q '^final_mask_coordinate_mode=roi_local$' <<<"${smoke_output}"
-    grep -q '^allow_cross_arch_init=1$' <<<"${smoke_output}"
-    grep -q '/best_model_epoch80.pth$' <<<"$(grep '^init_from=' <<<"${smoke_output}")"
-    if [[ "${content}" == "mask" ]]; then
-      grep -q '"dense_prompt_enabled": true' <<<"${smoke_output}"
-    else
-      grep -q '"dense_prompt_enabled": false' <<<"${smoke_output}"
-    fi
-  done
-done
-
 val_loss_override_output="$(DRY_RUN=1 CHECK_DATA=0 PREFLIGHT_MODEL=0 \
   COMPUTE_VAL_LOSS=1 NPROC_PER_NODE=4 CUDA_VISIBLE_DEVICES=0,1,2,3 \
-  GRAD_ACCUM_STEPS=2 bash "${SCRIPT_DIR}/b0_aggregator_mlp.sh")"
+  GRAD_ACCUM_STEPS=2 bash "${SCRIPT_DIR}/r1_c4_pafpn_coarse_points_box_dense_emb64.sh")"
 grep -q '^compute_val_loss=1$' <<<"${val_loss_override_output}"
 grep -q -- '--compute-val-loss 1' <<<"${val_loss_override_output}"
 grep -q '^nproc_per_node=4$' <<<"${val_loss_override_output}"
@@ -163,18 +110,10 @@ VAL_SUBSET_RATIO="${SMOKE_VAL_SUBSET_RATIO:-0.02}" \
 if [ "${FULL_MODEL_SMOKE:-1}" = "1" ]; then
   echo "[5/5] representative full model construction checks"
   for script in \
-    b0_aggregator_mlp.sh \
-    b1_pafpn_mlp.sh \
-    m0_aggregator_mlp_full_image.sh \
-    m1_pafpn_mlp_full_image.sh \
-    c1_aggregator_coarse_points.sh \
-    c2l_pafpn_coarse_points_roi_loss.sh \
-    c2r_pafpn_coarse_points_roi_sam.sh \
-    c4_pafpn_coarse_points_box_dense_densefix_unfreeze.sh \
+    r0_b0_aggregator_mlp_emb64.sh \
     r1_c3_pafpn_coarse_points_box_emb64.sh \
     r1_c4_pafpn_coarse_points_box_dense_emb64.sh \
     r1_c4_g_pafpn_coarse_points_box_gaussian_emb64.sh \
-    r0_b0_aggregator_mlp_emb64.sh \
     c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
   do
     echo "---- model ${script}"

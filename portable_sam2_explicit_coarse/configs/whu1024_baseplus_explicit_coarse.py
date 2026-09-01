@@ -5,25 +5,13 @@ import os
 _base_ = ["./whu1024_baseplus_clean.py"]
 
 _mode = os.environ.get("EXPLICIT_PROMPT_MODE", "points_box_dense").strip().lower()
-if _mode not in {"points", "box", "mask", "points_box", "points_box_dense"}:
+if _mode not in {"points_box", "points_box_dense"}:
     raise ValueError(f"Unsupported EXPLICIT_PROMPT_MODE={_mode!r}")
 
 _use_dense = _mode in {"mask", "points_box_dense"}
 _p2_boundary_refiner = (
     os.environ.get("P2_BOUNDARY_REFINER_ENABLED", "0") == "1"
 )
-_shape_context_fusion = os.environ.get(
-    "SHAPE_CONTEXT_FUSION", "roi_only"
-).strip().lower()
-if _shape_context_fusion not in {
-    "roi_only",
-    "gated_spatial_film",
-    "legacy_multiplicative",
-}:
-    raise ValueError(
-        "SHAPE_CONTEXT_FUSION must be roi_only, gated_spatial_film or "
-        f"legacy_multiplicative, got {_shape_context_fusion!r}"
-    )
 _epochs = int(os.environ.get("MAX_EPOCHS", "80"))
 _adaptive_validity_raw = os.environ.get("SHAPE_POINT_ADAPTIVE_VALIDITY", "1")
 if _adaptive_validity_raw not in {"0", "1"}:
@@ -76,43 +64,6 @@ if _gaussian_omega <= 0.0 or _gaussian_gamma <= 0.0:
 if _dense_transform == "gaussian_edt" and not _dense_detach:
     raise ValueError("gaussian_edt requires SHAPE_DENSE_DETACH=1")
 
-_final_mask_loss_mode = os.environ.get(
-    "FINAL_MASK_LOSS_MODE", "standard"
-).strip().lower()
-if _final_mask_loss_mode not in {"standard", "roi_balanced_dice"}:
-    raise ValueError(
-        "FINAL_MASK_LOSS_MODE must be standard or roi_balanced_dice, "
-        f"got {_final_mask_loss_mode!r}"
-    )
-_final_mask_loss_override = {}
-if _final_mask_loss_mode == "roi_balanced_dice":
-    _final_mask_loss_override["final_mask_loss_cfg"] = dict(
-        mode=_final_mask_loss_mode,
-        roi_expand_ratio=float(os.environ.get("FINAL_MASK_ROI_EXPAND_RATIO", "1.20")),
-        roi_bce_weight=float(os.environ.get("FINAL_MASK_ROI_BCE_WEIGHT", "1.0")),
-        roi_dice_weight=float(os.environ.get("FINAL_MASK_ROI_DICE_WEIGHT", "1.0")),
-        outside_bce_weight=float(
-            os.environ.get("FINAL_MASK_OUTSIDE_BCE_WEIGHT", "0.05")
-        ),
-        eps=1e-6,
-    )
-
-_roi_sam_raw = os.environ.get("ROI_SAM_ENABLED", "0")
-if _roi_sam_raw not in {"0", "1"}:
-    raise ValueError(f"ROI_SAM_ENABLED must be 0 or 1, got {_roi_sam_raw!r}")
-_roi_sam_enabled = _roi_sam_raw == "1"
-if _roi_sam_enabled and _mode != "points":
-    raise ValueError("ROI-SAM is a strict C2 points-only experiment")
-if _roi_sam_enabled and _final_mask_loss_mode != "standard":
-    raise ValueError("ROI-SAM uses standard ROI-local final-mask supervision")
-_roi_sam_override = {}
-if _roi_sam_enabled:
-    _roi_sam_override["roi_sam_cfg"] = dict(
-        enabled=True,
-        sampling_ratio=int(os.environ.get("ROI_SAM_SAMPLING_RATIO", "2")),
-        aligned=True,
-    )
-
 _point_no_point_epochs = int(
     os.environ.get(
         "POINT_WARMUP_NO_POINT_EPOCHS",
@@ -149,15 +100,9 @@ model = dict(
             freeze_mask_decoder=False,
             freeze_no_mask_embed=True,
             load_no_mask_pretrained=True,
-            final_mask_coordinate_mode=(
-                "roi_local"
-                if _roi_sam_enabled
-                else os.environ.get(
-                    "FINAL_MASK_COORDINATE_MODE", "roi_local"
-                ).strip().lower()
-            ),
-            **_final_mask_loss_override,
-            **_roi_sam_override,
+            final_mask_coordinate_mode=os.environ.get(
+                "FINAL_MASK_COORDINATE_MODE", "roi_local"
+            ).strip().lower(),
             shape_base_dense_mode="no_mask",
             shape_prior_loss_weight=_shape_loss_weight,
             shape_prior_cfg=dict(
@@ -168,10 +113,6 @@ model = dict(
                 coarse_mask_output_size=int(
                     os.environ.get("COARSE_MASK_OUTPUT_SIZE", "64")
                 ),
-                fusion_type=_shape_context_fusion,
-                context_gate_init=0.10,
-                zero_init_gamma=True,
-                zero_init_beta=True,
                 use_shape_dense=_use_dense,
                 shape_scale_mode="global_sigmoid",
                 prompt_scale_init=float(

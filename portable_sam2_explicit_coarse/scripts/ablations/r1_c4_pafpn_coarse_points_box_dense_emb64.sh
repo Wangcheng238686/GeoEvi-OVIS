@@ -6,5 +6,4 @@ export NECK_TYPE="pafpn"
 export PROMPT_ROUTE="coarse"
 export EXPLICIT_PROMPT_MODE="points_box_dense"
 export P2_BOUNDARY_REFINER_ENABLED=0
-export SAM_IMAGE_EMBED_STRIDE=16
 exec bash "$(cd "$(dirname "$0")" && pwd)/_run_ablation.sh" "$@"

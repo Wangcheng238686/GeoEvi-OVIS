@@ -242,29 +242,13 @@ def main():
     )
     ctx = shape.forward_context_visual(image)
     assert ctx is None
-    assert shape.fusion_type == "roi_only"
-    assert shape.visual_context_proj is None
-    assert shape.spatial_cross_attn is None
-    assert shape.gamma_head is None and shape.beta_head is None
+    assert getattr(shape, "visual_context_proj", None) is None
+    assert getattr(shape, "spatial_cross_attn", None) is None
+    assert getattr(shape, "gamma_head", None) is None
+    assert getattr(shape, "beta_head", None) is None
     raw, _, _, _ = shape.forward_roi(ctx, roi, boxes, roi_img_ids)
     assert raw.shape == (n, 1, 64, 64)
     assert float(shape.get_debug_stats()["CONTEXT/enabled"].item()) == 0.0
-
-    # FiLM remains constructible only as an explicit later ablation, and its
-    # zero-initialized output heads preserve the local path initially.
-    film_shape = ShapePriorInjector(
-        img_size=1024,
-        visual_context_dim=256,
-        roi_feat_channels=512,
-        fusion_type="gated_spatial_film",
-        coarse_mask_output_size=64,
-    )
-    film_ctx = film_shape.forward_context_visual(image)
-    assert film_ctx.shape == (2, 64, 512)
-    film_raw, _, _, _ = film_shape.forward_roi(
-        film_ctx, roi, boxes, roi_img_ids
-    )
-    assert torch.equal(film_raw, film_shape.mask_decoder(roi))
 
     p2 = torch.randn(2, 512, 64, 64, requires_grad=True)
     prompt_rois = torch.cat(

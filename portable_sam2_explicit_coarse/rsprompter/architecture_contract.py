@@ -63,10 +63,6 @@ def architecture_id(model_config: Mapping[str, Any]) -> str:
     refiner = bool(head.get("p2_boundary_refiner_cfg", {}).get("enabled", False))
     if not coarse:
         known = {
-            ("aggregator", "roi_local", 32): "b0_aggregator_mlp",
-            ("pafpn", "roi_local", 32): "b1_pafpn_mlp",
-            ("aggregator", "full_image", 32): "m0_aggregator_mlp_full_image",
-            ("pafpn", "full_image", 32): "m1_pafpn_mlp_full_image",
             ("aggregator", "roi_local", 16): "r0_b0_aggregator_mlp_emb64",
         }
         return known.get(
@@ -77,26 +73,6 @@ def architecture_id(model_config: Mapping[str, Any]) -> str:
     dense_prompt_cfg = head.get("dense_prompt_cfg", {})
     dense_transform = str(dense_prompt_cfg.get("transform", "raw_logits"))
     dense_detach = bool(dense_prompt_cfg.get("detach_input", False))
-    final_loss_mode = str(
-        head.get("final_mask_loss_cfg", {}).get("mode", "standard")
-    )
-    roi_sam = bool(head.get("roi_sam_cfg", {}).get("enabled", False))
-    if (
-        neck_name == "pafpn"
-        and mode == "points"
-        and stride == 32
-        and not refiner
-        and roi_sam
-    ):
-        return "c2r_pafpn_coarse_points_roi_sam"
-    if (
-        neck_name == "pafpn"
-        and mode == "points"
-        and stride == 32
-        and not refiner
-        and final_loss_mode == "roi_balanced_dice"
-    ):
-        return "c2l_pafpn_coarse_points_roi_loss"
     if (
         neck_name == "pafpn"
         and mode == "points_box_dense"
@@ -116,10 +92,6 @@ def architecture_id(model_config: Mapping[str, Any]) -> str:
     ):
         return "r1_c4_g_pafpn_coarse_points_box_gaussian_emb64"
     known = {
-        ("aggregator", "points", 32, False): "c1_aggregator_coarse_points",
-        ("pafpn", "points", 32, False): "c2_pafpn_coarse_points",
-        ("pafpn", "points_box", 32, False): "c3_pafpn_coarse_points_box",
-        ("pafpn", "points_box_dense", 32, False): "c4_pafpn_coarse_points_box_dense",
         ("pafpn", "points_box", 16, False): "r1_c3_pafpn_coarse_points_box_emb64",
         ("pafpn", "points_box_dense", 16, False): "r1_c4_pafpn_coarse_points_box_dense_emb64",
         ("pafpn", "points_box_dense", 16, True): "c5v2_pafpn_coarse_p2_boundary_refiner_emb64",
