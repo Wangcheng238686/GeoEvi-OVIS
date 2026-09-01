@@ -23,6 +23,62 @@ from mmdet.structures.mask import BitmapMasks
 from mmengine.structures import InstanceData
 
 
+import sys as _sys
+_ROOT = __import__('pathlib').Path(__file__).resolve().parents[1]
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
+# Behaviour-preserving split: helpers moved to sibling modules.
+from train.checkpointing import (  # noqa: F401
+    _assert_no_mask_embedding_contract,
+    _load_checkpoint,
+    _load_init_checkpoint,
+    _save_checkpoint,
+    _save_verified_best_checkpoint,
+)
+from train.distributed import (  # noqa: F401
+    _broadcast_stop_training,
+    _capture_git_state,
+    _init_distributed,
+    _is_main_process,
+    _resolve_ddp_control_timeout_seconds,
+    _resolve_ddp_timeout_seconds,
+)
+from train.eval_metrics import (  # noqa: F401
+    _env_flag,
+    _extract_instances_numpy,
+    _mask_to_rle,
+    _metric_expression_value,
+    _metric_value,
+    _masks_to_rles,
+    _summarize_mask_density,
+    _weighted_metric_value,
+    _xyxy_to_xywh,
+    build_coco_gt_and_dt,
+    run_coco_eval,
+)
+from train.losses import (  # noqa: F401
+    _apply_detection_loss_weight,
+    _detection_loss_weight,
+    _materialize_p2_boundary_refiner_loss,
+    _scale_loss_value,
+    _set_model_current_epoch,
+)
+from train.monitors import (  # noqa: F401
+    _accumulate_dense_residual_monitor,
+    _accumulate_p2br_epoch_monitor,
+    _log_prompt_debug_stats,
+    _log_trainable_state,
+    _reduce_dense_residual_monitor,
+    _reduce_p2br_epoch_monitor,
+    _stat_scalar,
+)
+from train.optim import (  # noqa: F401
+    ExponentialMovingAverage,
+    _build_optimizer,
+    _get_model_core,
+    _set_norm_eval,
+)
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
@@ -32,1292 +88,89 @@ logger = logging.getLogger("portable_sam_fusion")
 # ---------------------------------------------------------------------------
 # COCO-style evaluation helpers (from inference_rsprompter_fusion.py)
 # ---------------------------------------------------------------------------
-def _mask_to_rle(binary_mask: np.ndarray) -> dict:
-    """Convert binary mask (H, W) to COCO RLE format."""
-    from pycocotools import mask as mask_util
-
-    mask_fortran = np.asfortranarray(binary_mask.astype(np.uint8))
-    rle = mask_util.encode(mask_fortran)
-    rle["counts"] = rle["counts"].decode("utf-8")
-    return rle
-
-
-def _masks_to_rles(binary_masks: np.ndarray) -> List[dict]:
-    """Batch-encode N binary masks as JSON-safe COCO RLE records."""
-    from pycocotools import mask as mask_util
-
-    masks = np.asarray(binary_masks, dtype=np.uint8)
-    if masks.ndim == 2:
-        masks = masks[None, ...]
-    if masks.ndim != 3:
-        raise ValueError(f"Expected masks with shape [N,H,W], got {masks.shape}")
-    if len(masks) == 0:
-        return []
-
-    # pycocotools batch encode expects [H,W,N] in Fortran order. Encoding here
-    # lets validation release dense 1024x1024 masks immediately per image.
-    encoded = mask_util.encode(
-        np.asfortranarray(np.moveaxis(masks, 0, -1))
-    )
-    if isinstance(encoded, dict):
-        encoded = [encoded]
-    rles = []
-    for rle in encoded:
-        rle = dict(rle)
-        counts = rle.get("counts")
-        if isinstance(counts, bytes):
-            rle["counts"] = counts.decode("utf-8")
-        rles.append(rle)
-    return rles
-
-
-def _xyxy_to_xywh(bbox: np.ndarray) -> np.ndarray:
-    """Convert [x1, y1, x2, y2] to [x, y, w, h]."""
-    out = bbox.copy()
-    out[..., 2] = bbox[..., 2] - bbox[..., 0]
-    out[..., 3] = bbox[..., 3] - bbox[..., 1]
-    return out
-
-
-def build_coco_gt_and_dt(
-    all_gt: List[dict],
-    all_dt: List[dict],
-    img_metas_list: List[dict],
-    score_key: str = "scores",
-) -> Tuple:
-    """Build pycocotools COCO objects for GT and detections."""
-    from pycocotools.coco import COCO
-
-    images = []
-    annotations = []
-    predictions = []
-    ann_id = 1
-
-    for img_id, (gt, dt, meta) in enumerate(
-        zip(all_gt, all_dt, img_metas_list), start=1
-    ):
-        h, w = meta["img_shape"][:2]
-        images.append({"id": img_id, "height": int(h), "width": int(w)})
-
-        # GT annotations
-        gt_bboxes = gt["bboxes"]
-        gt_labels = gt["labels"]
-        gt_rles = gt.get("rles")
-        gt_masks = gt.get("masks")
-        if gt_rles is None:
-            if hasattr(gt_masks, "masks"):
-                gt_masks = gt_masks.masks
-            gt_rles = _masks_to_rles(gt_masks)
-
-        num_gt = len(gt_labels)
-        for i in range(num_gt):
-            bbox_xywh = _xyxy_to_xywh(gt_bboxes[i]).tolist()
-            area = float(bbox_xywh[2] * bbox_xywh[3])
-            seg_rle = gt_rles[i]
-            annotations.append(
-                {
-                    "id": ann_id,
-                    "image_id": img_id,
-                    "category_id": 1,
-                    "bbox": bbox_xywh,
-                    "area": area,
-                    "segmentation": seg_rle,
-                    "iscrowd": 0,
-                }
-            )
-            ann_id += 1
-
-        # Predictions
-        dt_bboxes = dt["bboxes"]
-        if score_key not in dt:
-            raise KeyError(
-                f"Configured COCO score key {score_key!r} is missing from "
-                "predictions; refusing a silent score fallback"
-            )
-        dt_scores = dt[score_key]
-        dt_rles = dt.get("rles")
-        dt_masks = dt.get("masks")
-        if dt_rles is None:
-            if hasattr(dt_masks, "masks"):
-                dt_masks = dt_masks.masks
-            dt_rles = _masks_to_rles(dt_masks)
-
-        num_dt = len(dt_scores)
-        for i in range(num_dt):
-            bbox_xywh = _xyxy_to_xywh(dt_bboxes[i]).tolist()
-            seg_rle = dt_rles[i]
-            predictions.append(
-                {
-                    "image_id": img_id,
-                    "category_id": 1,
-                    "bbox": bbox_xywh,
-                    "score": float(dt_scores[i]),
-                    "segmentation": seg_rle,
-                }
-            )
-
-    # Build COCO GT
-    gt_dataset = {
-        "images": images,
-        "annotations": annotations,
-        "categories": [{"id": 1, "name": "building"}],
-    }
-    coco_gt = COCO()
-    coco_gt.dataset = gt_dataset
-    coco_gt.createIndex()
-
-    # Build COCO DT
-    if predictions:
-        coco_dt = coco_gt.loadRes(predictions)
-    else:
-        coco_dt = COCO()
-        coco_dt.dataset = {"images": images, "annotations": [], "categories": gt_dataset["categories"]}
-        coco_dt.createIndex()
-
-    return coco_gt, coco_dt
-
-
-def run_coco_eval(coco_gt, coco_dt, iou_type: str = "bbox", max_dets=None) -> OrderedDict:
-    """Run COCOeval and return metrics dict."""
-    from pycocotools.cocoeval import COCOeval
-
-    coco_eval = COCOeval(coco_gt, coco_dt, iouType=iou_type)
-    if max_dets is not None:
-        coco_eval.params.maxDets = max_dets
-    coco_eval.evaluate()
-    coco_eval.accumulate()
-    coco_eval.summarize()
-    if max_dets is not None:
-        # summarize() hardcodes maxDets=100 for the primary AP stat and
-        # yields -1 when 100 is absent from params.maxDets. Recompute the
-        # IoU-averaged AP from the accumulated precision array at the
-        # custom cap (no reliance on private summarize helpers).
-        try:
-            _mind = list(coco_eval.params.maxDets).index(list(max_dets)[-1])
-            _prec = coco_eval.eval["precision"]
-            _aps = []
-            for _k in range(_prec.shape[2]):
-                _p = _prec[:, :, _k, 0, _mind]
-                _v = _p[_p > -1]
-                if _v.size:
-                    _aps.append(float(_v.mean()))
-            if _aps:
-                coco_eval.stats[0] = sum(_aps) / len(_aps)
-        except Exception:
-            # A silent -1 here would poison best-model selection for the whole
-            # run (constant metric -> best never updates); surface it loudly.
-            logger.warning(
-                "run_coco_eval custom-maxDets recompute failed for "
-                "iou_type=%s max_dets=%s; mAP may read -1",
-                iou_type,
-                list(max_dets),
-                exc_info=True,
-            )
-
-    metric_names = [
-        "mAP", "mAP_50", "mAP_75", "mAP_s", "mAP_m", "mAP_l",
-        "AR@1", "AR@10", "AR@100", "AR_s", "AR_m", "AR_l",
-    ]
-    results = OrderedDict()
-    prefix = "bbox" if iou_type == "bbox" else "segm"
-    for name, val in zip(metric_names, coco_eval.stats):
-        results[f"{prefix}/{name}"] = float(val)
-    return results
-
-
-def _env_flag(name: str, default: str = "0") -> bool:
-    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _metric_value(metrics: Dict[str, float], metric_name: str) -> Optional[float]:
-    if not metric_name:
-        return None
-    value = metrics.get(metric_name)
-    if value is None:
-        return None
-    return float(value)
-
-
-def _weighted_metric_value(metrics: Dict[str, float], spec: str) -> Optional[float]:
-    """Parse '0.5*bbox/mAP_75+0.5*segm/mAP_75' style metric expressions."""
-    total = 0.0
-    found = False
-    for raw_part in spec.split("+"):
-        part = raw_part.strip()
-        if not part:
-            continue
-        if "*" in part:
-            weight_text, metric_name = part.split("*", 1)
-            weight = float(weight_text.strip())
-            metric_name = metric_name.strip()
-        else:
-            weight = 1.0
-            metric_name = part
-        value = _metric_value(metrics, metric_name)
-        if value is None:
-            return None
-        total += weight * value
-        found = True
-    return total if found else None
-
-
-def _metric_expression_value(metrics: Dict[str, float], spec: str) -> Optional[float]:
-    if "+" in spec or "*" in spec:
-        return _weighted_metric_value(metrics, spec)
-    return _metric_value(metrics, spec)
-
-
-def _save_verified_best_checkpoint(
-    checkpoint_dir: Path,
-    prefix: str,
-    score_label: str,
-    score_value: float,
-    epoch: int,
-    model: torch.nn.Module,
-    optimizer: optim.Optimizer,
-    scheduler: optim.lr_scheduler._LRScheduler,
-    best_metrics: Dict,
-    history: Dict,
-    config_snapshot: Optional[Dict],
-    scaler: Optional[Any],
-    ema_state: Optional[Dict] = None,
-) -> bool:
-    new_best = checkpoint_dir / f"{prefix}_epoch{epoch + 1}.pth"
-    _save_checkpoint(
-        new_best,
-        model,
-        optimizer,
-        scheduler,
-        epoch,
-        best_metrics,
-        history,
-        config_snapshot=config_snapshot,
-        scaler=scaler,
-        ema_state=ema_state,
-    )
-    try:
-        _verify = torch.load(str(new_best), map_location="cpu", weights_only=False)
-        assert "model" in _verify, "Missing 'model' key"
-        assert "optimizer" in _verify, "Missing 'optimizer' key"
-        assert "scheduler" in _verify, "Missing 'scheduler' key"
-        assert "config_snapshot" in _verify, "Missing 'config_snapshot' key"
-        logger.info("Saved %s with %s: %.4f", prefix, score_label, score_value)
-    except Exception as e:
-        logger.error("Checkpoint verification FAILED for %s, keeping old best: %s", prefix, e)
-        new_best.unlink(missing_ok=True)
-        return False
-
-    best_link = checkpoint_dir / f"{prefix}.pth"
-    for old in checkpoint_dir.glob(f"{prefix}_epoch*.pth"):
-        if old != new_best:
-            old.unlink(missing_ok=True)
-    best_link.unlink(missing_ok=True)
-    best_link.symlink_to(new_best.name)
-    return True
-
-
-def _extract_instances_numpy(
-    instances, img_shape: Tuple[int, int], encode_masks: bool = False
-) -> dict:
-    """Extract InstanceData, optionally replacing dense masks with COCO RLE."""
-    bboxes = instances.bboxes
-    if isinstance(bboxes, torch.Tensor):
-        bboxes = bboxes.detach().cpu().numpy()
-    labels = instances.labels
-    if isinstance(labels, torch.Tensor):
-        labels = labels.detach().cpu().numpy()
-
-    scores = None
-    if hasattr(instances, "scores"):
-        scores = instances.scores
-        if isinstance(scores, torch.Tensor):
-            scores = scores.detach().cpu().numpy()
-
-    masks = None
-    if hasattr(instances, "masks"):
-        masks = instances.masks
-        if hasattr(masks, "masks"):
-            masks = masks.masks
-        elif hasattr(masks, "to_ndarray"):
-            masks = masks.to_ndarray()
-        elif isinstance(masks, torch.Tensor):
-            masks = masks.detach().cpu().numpy()
-
-    # Ensure masks shape matches img_shape
-    h, w = img_shape[:2]
-    if masks is not None and len(masks) > 0 and masks.shape[1:] != (h, w):
-        resized = []
-        for m in masks:
-            resized.append(
-                cv2.resize(m.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST)
-            )
-        masks = np.stack(resized, axis=0)
-
-    if masks is None or len(masks) == 0:
-        masks = np.zeros((0, h, w), dtype=np.uint8)
-
-    out = {"bboxes": bboxes, "labels": labels}
-    if encode_masks:
-        mask_count = len(masks)
-        out["rles"] = _masks_to_rles(masks)
-        out["mask_count"] = mask_count
-        out["mask_fill_sum"] = (
-            float(np.count_nonzero(masks)) / float(max(1, h * w))
-            if mask_count > 0
-            else 0.0
-        )
-    else:
-        out["masks"] = masks
-    if scores is not None:
-        out["scores"] = scores
-    if hasattr(instances, "mask_scores"):
-        mask_scores = instances.mask_scores
-        if isinstance(mask_scores, torch.Tensor):
-            mask_scores = mask_scores.detach().cpu().numpy()
-        out["mask_scores"] = mask_scores
-    return out
-
-
-def _summarize_mask_density(all_dt: List[dict]) -> Tuple[float, float]:
-    """Return average binary mask fill ratio and masks per validation image."""
-    weighted_fill = 0.0
-    total_masks = 0
-    for dt in all_dt:
-        if "mask_count" in dt and "mask_fill_sum" in dt:
-            total_masks += int(dt["mask_count"])
-            weighted_fill += float(dt["mask_fill_sum"])
-            continue
-        masks = dt.get("masks")
-        if masks is None or len(masks) == 0:
-            continue
-        pixels_per_mask = int(np.prod(masks.shape[1:]))
-        weighted_fill += float(np.count_nonzero(masks)) / max(1, pixels_per_mask)
-        total_masks += len(masks)
-    return (
-        weighted_fill / max(total_masks, 1),
-        total_masks / max(len(all_dt), 1),
-    )
-
-
-def _capture_git_state() -> Dict[str, str]:
-    """Fingerprint the executed code: HEAD, dirty flag, tracked-diff sha.
-
-    Complements the runner's resolved_hyperparameters git_* lines so both the
-    training log and every checkpoint pin the exact working-tree state, not
-    just the commit (a dirty tree silently diverging from HEAD is what made
-    the resumed paper run hard to trace).
-    """
-    import subprocess
-
-    def _git(*argv: str) -> str:
-        try:
-            return subprocess.run(
-                ["git", *argv],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            ).stdout.strip()
-        except Exception:
-            return ""
-
-    head = _git("rev-parse", "HEAD") or "unknown"
-    status = _git("status", "--porcelain")
-    dirty = "1" if status else "0"
-    code_files = ",".join(
-        line.split(maxsplit=1)[1].strip()
-        for line in status.splitlines()
-        if line.split(maxsplit=1)[-1].strip().endswith((".py", ".sh", ".md"))
-    )[:400]
-    try:
-        diff_sha = subprocess.run(
-            ["git", "diff", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        import hashlib
-
-        diff_sha16 = (
-            hashlib.sha256(diff_sha.stdout.encode("utf-8")).hexdigest()[:16]
-            if diff_sha.stdout
-            else "none"
-        )
-    except Exception:
-        diff_sha16 = "unknown"
-    return {
-        "git_commit": head,
-        "git_dirty": dirty,
-        "git_dirty_code_files": code_files or "none",
-        "git_diff_sha16": diff_sha16,
-    }
-
-
-def _resolve_ddp_timeout_seconds() -> int:
-    raw_value = os.environ.get(
-        "TORCH_DDP_TIMEOUT_SECONDS", os.environ.get("NCCL_TIMEOUT", "1800")
-    )
-    try:
-        timeout_seconds = int(raw_value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "TORCH_DDP_TIMEOUT_SECONDS must be a positive integer, "
-            f"got {raw_value!r}"
-        ) from exc
-    if timeout_seconds < 1:
-        raise ValueError(
-            "TORCH_DDP_TIMEOUT_SECONDS must be >= 1, "
-            f"got {timeout_seconds}"
-        )
-    return timeout_seconds
-
-
-def _resolve_ddp_control_timeout_seconds() -> int:
-    raw_value = os.environ.get("TORCH_DDP_CONTROL_TIMEOUT_SECONDS", "86400")
-    try:
-        timeout_seconds = int(raw_value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "TORCH_DDP_CONTROL_TIMEOUT_SECONDS must be a positive integer, "
-            f"got {raw_value!r}"
-        ) from exc
-    if timeout_seconds < 1:
-        raise ValueError(
-            "TORCH_DDP_CONTROL_TIMEOUT_SECONDS must be >= 1, "
-            f"got {timeout_seconds}"
-        )
-    return timeout_seconds
-
-
-def _init_distributed() -> Dict[str, Any]:
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    rank = int(os.environ.get("RANK", "0"))
-    local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("SLURM_LOCALID", "0")))
-    launched_by_torchrun = os.environ.get("LOCAL_RANK", None) is not None
-    should_init = (world_size > 1) or launched_by_torchrun
-    if should_init and not dist.is_initialized():
-        # Bind each worker before NCCL creates communicators. Initializing NCCL
-        # while every process still points at cuda:0 can leave rank 0 with an
-        # avoidable memory imbalance.
-        if torch.cuda.is_available():
-            torch.cuda.set_device(local_rank)
-        dist.init_process_group(
-            backend="nccl",
-            init_method="env://",
-            timeout=timedelta(seconds=_resolve_ddp_timeout_seconds()),
-        )
-    distributed = dist.is_initialized()
-    control_group = None
-    if distributed and world_size > 1:
-        # Validation is intentionally rank-0-only and can take longer than the
-        # training NCCL timeout. Keep epoch control on CPU/Gloo so idle ranks do
-        # not hold an NCCL collective open throughout validation/COCO eval.
-        control_group = dist.new_group(
-            ranks=list(range(world_size)),
-            backend="gloo",
-            timeout=timedelta(seconds=_resolve_ddp_control_timeout_seconds()),
-        )
-    return {
-        "world_size": world_size,
-        "rank": rank,
-        "local_rank": local_rank,
-        "distributed": int(distributed),
-        "control_group": control_group,
-    }
-
-
-def _broadcast_stop_training(
-    stop_training: bool, control_group: Optional[Any]
-) -> bool:
-    """Synchronize rank-0's epoch decision without occupying NCCL."""
-    if not dist.is_initialized():
-        return bool(stop_training)
-    if control_group is None:
-        raise RuntimeError(
-            "distributed epoch control requires the CPU/Gloo control group"
-        )
-    stop_tensor = torch.tensor(
-        [1 if stop_training else 0], device="cpu", dtype=torch.int32
-    )
-    dist.broadcast(stop_tensor, src=0, group=control_group)
-    return bool(stop_tensor.item())
-
-
-def _is_main_process(rank: int) -> bool:
-    return rank == 0
-
-
-def _build_optimizer(
-    model: torch.nn.Module,
-    lr: float,
-    sat_backbone_lr_mult: float,
-    sat_other_lr_mult: float,
-    bbox_head_lr_mult: float,
-    mask_decoder_lr_mult: float = 0.05,
-    no_mask_lr_mult: float = 0.1,
-    prompt_encoder_lr_mult: float = 0.1,
-    shape_prior_lr_mult: float = 1.0,
-    p2_boundary_refiner_lr_mult: float = 1.0,
-    weight_decay: float = 0.05,
-) -> optim.Optimizer:
-    params_sat_backbone = []
-    names_sat_backbone = []
-    params_mask_decoder = []
-    names_mask_decoder = []
-    params_no_mask = []
-    names_no_mask = []
-    params_prompt_encoder = []
-    names_prompt_encoder = []
-    params_shape_prior = []
-    names_shape_prior = []
-    params_p2_boundary_refiner = []
-    names_p2_boundary_refiner = []
-    params_bbox_head = []
-    names_bbox_head = []
-    params_sat_other = []
-    names_sat_other = []
-
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        match_name = name.replace("_fsdp_wrapped_module.", "").replace("module.", "")
-        if match_name.startswith("backbone.") or match_name.startswith("shared_image_embedding."):
-            params_sat_backbone.append(param)
-            names_sat_backbone.append(name)
-        elif "roi_head.mask_head.mask_decoder" in match_name:
-            params_mask_decoder.append(param)
-            names_mask_decoder.append(name)
-        elif "roi_head.mask_head.no_mask_embed" in match_name:
-            params_no_mask.append(param)
-            names_no_mask.append(name)
-        elif "roi_head.mask_head.prompt_encoder" in match_name:
-            params_prompt_encoder.append(param)
-            names_prompt_encoder.append(name)
-        elif "roi_head.mask_head.p2_boundary_refiner" in match_name:
-            params_p2_boundary_refiner.append(param)
-            names_p2_boundary_refiner.append(name)
-        elif (
-            "roi_head.mask_head.shape_injector" in match_name
-            or "roi_head.mask_head.shape_prompt_scale" in match_name
-            or "roi_head.mask_head.roi_dense" in match_name
-        ):
-            params_shape_prior.append(param)
-            names_shape_prior.append(name)
-        elif (
-            bbox_head_lr_mult > 0
-            and match_name.startswith("roi_head.bbox_head.")
-        ):
-            params_bbox_head.append(param)
-            names_bbox_head.append(name)
-        else:
-            params_sat_other.append(param)
-            names_sat_other.append(name)
-
-    param_groups = []
-    audit_groups = []
-    if params_sat_backbone:
-        param_groups.append(
-            {
-                "params": params_sat_backbone,
-                "lr": lr * sat_backbone_lr_mult,
-                "name": "sat_backbone",
-            }
-        )
-        audit_groups.append(("sat_backbone", params_sat_backbone, names_sat_backbone, lr * sat_backbone_lr_mult, weight_decay))
-    if params_mask_decoder:
-        param_groups.append(
-            {
-                "params": params_mask_decoder,
-                "lr": lr * mask_decoder_lr_mult,
-                "weight_decay": weight_decay,
-                "name": "mask_decoder",
-            }
-        )
-        audit_groups.append(("mask_decoder", params_mask_decoder, names_mask_decoder, lr * mask_decoder_lr_mult, weight_decay))
-    if params_no_mask:
-        param_groups.append(
-            {
-                "params": params_no_mask,
-                "lr": lr * no_mask_lr_mult,
-                "weight_decay": weight_decay,
-                "name": "no_mask_embed",
-            }
-        )
-        audit_groups.append(("no_mask_embed", params_no_mask, names_no_mask, lr * no_mask_lr_mult, weight_decay))
-    if params_prompt_encoder:
-        param_groups.append(
-            {
-                "params": params_prompt_encoder,
-                "lr": lr * prompt_encoder_lr_mult,
-                "weight_decay": 0.0,
-                "name": "prompt_encoder",
-            }
-        )
-        audit_groups.append(("prompt_encoder", params_prompt_encoder, names_prompt_encoder, lr * prompt_encoder_lr_mult, 0.0))
-    if params_shape_prior:
-        param_groups.append(
-            {
-                "params": params_shape_prior,
-                "lr": lr * shape_prior_lr_mult,
-                "name": "shape_prior",
-            }
-        )
-        audit_groups.append(("shape_prior", params_shape_prior, names_shape_prior, lr * shape_prior_lr_mult, weight_decay))
-    if params_p2_boundary_refiner:
-        param_groups.append(
-            {
-                "params": params_p2_boundary_refiner,
-                "lr": lr * p2_boundary_refiner_lr_mult,
-                "weight_decay": weight_decay,
-                "name": "p2_boundary_refiner",
-            }
-        )
-        audit_groups.append(
-            (
-                "p2_boundary_refiner",
-                params_p2_boundary_refiner,
-                names_p2_boundary_refiner,
-                lr * p2_boundary_refiner_lr_mult,
-                weight_decay,
-            )
-        )
-    if params_bbox_head:
-        param_groups.append(
-            {
-                "params": params_bbox_head,
-                "lr": lr * bbox_head_lr_mult,
-                "name": "bbox_head",
-            }
-        )
-        audit_groups.append(("bbox_head", params_bbox_head, names_bbox_head, lr * bbox_head_lr_mult, weight_decay))
-    if params_sat_other:
-        param_groups.append(
-            {
-                "params": params_sat_other,
-                "lr": lr * sat_other_lr_mult,
-                "name": "sat_other",
-            }
-        )
-        audit_groups.append(("sat_other", params_sat_other, names_sat_other, lr * sat_other_lr_mult, weight_decay))
-
-    if not param_groups:
-        raise RuntimeError(
-            "No trainable parameters found. Check freezing / requires_grad."
-        )
-
-    if int(os.environ.get("RANK", "0")) == 0:
-        for group_name, params, names, group_lr, group_wd in audit_groups:
-            count = sum(p.numel() for p in params)
-            first = names[0] if names else "<none>"
-            last = names[-1] if names else "<none>"
-            logger.info(
-                "Optimizer group %-15s params=%d tensors=%d lr=%.3e wd=%.3e first=%s last=%s",
-                group_name,
-                count,
-                len(params),
-                group_lr,
-                group_wd,
-                first,
-                last,
-            )
-
-    return optim.AdamW(param_groups, lr=lr, weight_decay=weight_decay, eps=1e-6)
-
-
-def _set_norm_eval(model: torch.nn.Module):
-    for m in model.modules():
-        if isinstance(
-            m, (torch.nn.BatchNorm2d, torch.nn.SyncBatchNorm, torch.nn.GroupNorm)
-        ):
-            m.eval()
-            for p in m.parameters():
-                p.requires_grad = False
-
-
-def _get_model_core(model: torch.nn.Module) -> torch.nn.Module:
-    """Unwrap DDP/FSDP to reach the underlying model."""
-    return model.module if hasattr(model, "module") else model
-
-
-def _assert_no_mask_embedding_contract(
-    model: torch.nn.Module, context: str
-) -> None:
-    model_core = _get_model_core(model)
-    mask_head = getattr(getattr(model_core, "roi_head", None), "mask_head", None)
-    validator = getattr(mask_head, "assert_no_mask_embedding_contract", None)
-    if validator is not None:
-        validator(context)
-
-
-class ExponentialMovingAverage:
-    """EMA shadow weights used only for eval/export, never for backprop."""
-
-    def __init__(self, model: torch.nn.Module, decay: float = 0.999):
-        if not (0.0 < decay < 1.0):
-            raise ValueError(f"EMA decay must be in (0,1), got {decay}")
-        self.decay = float(decay)
-        model_core = _get_model_core(model)
-        state = model_core.state_dict()
-        self.ema_state = {k: v.detach().clone() for k, v in state.items()}
-        self.backup_state = None
-        # Frozen tensors (params with requires_grad=False, plus buffers) must
-        # be copied verbatim, never averaged: averaging a constant across tens
-        # of thousands of steps accumulates fp32 rounding drift (~1e-6 per
-        # the fast-150 run), which trips strict pretrained-value contract
-        # checks (no_mask_embed) when the EMA state is loaded for inference.
-        _frozen = {n for n, p in model_core.named_parameters() if not p.requires_grad}
-        _frozen.update(n for n, _ in model_core.named_buffers())
-        self._frozen_keys = frozenset(k for k in state if k in _frozen)
-
-    @torch.no_grad()
-    def update(self, model: torch.nn.Module):
-        model_state = _get_model_core(model).state_dict()
-        for key, value in model_state.items():
-            value_detached = value.detach()
-            if key not in self.ema_state:
-                self.ema_state[key] = value_detached.clone()
-                continue
-            ema_value = self.ema_state[key]
-            if (
-                torch.is_floating_point(value_detached)
-                and key not in self._frozen_keys
-            ):
-                ema_value.mul_(self.decay).add_(value_detached, alpha=1.0 - self.decay)
-            else:
-                ema_value.copy_(value_detached)
-
-        stale_keys = [k for k in self.ema_state.keys() if k not in model_state]
-        for stale_key in stale_keys:
-            self.ema_state.pop(stale_key, None)
-
-    def apply_to(self, model: torch.nn.Module):
-        model_core = _get_model_core(model)
-        current_state = model_core.state_dict()
-        self.backup_state = {k: v.detach().clone() for k, v in current_state.items()}
-        model_core.load_state_dict(self.ema_state, strict=False)
-        _assert_no_mask_embedding_contract(model_core, "EMA state load")
-
-    def restore(self, model: torch.nn.Module):
-        if self.backup_state is None:
-            return
-        model_core = _get_model_core(model)
-        model_core.load_state_dict(self.backup_state, strict=False)
-        _assert_no_mask_embedding_contract(model_core, "EMA state restore")
-        self.backup_state = None
-
-    def state_dict(self) -> Dict:
-        return {
-            "decay": self.decay,
-            "ema_state": {k: v.detach().clone() for k, v in self.ema_state.items()},
-        }
-
-    def load_state_dict(self, state: Dict):
-        self.decay = float(state.get("decay", self.decay))
-        loaded = state.get("ema_state", {})
-        default_device = None
-        for tensor in self.ema_state.values():
-            default_device = tensor.device
-            break
-
-        for key in list(self.ema_state.keys()):
-            if key in loaded:
-                target = self.ema_state[key]
-                source = loaded[key].detach().to(device=target.device, dtype=target.dtype)
-                target.copy_(source)
-        for key, value in loaded.items():
-            if key not in self.ema_state:
-                source = value.detach()
-                if default_device is not None:
-                    source = source.to(device=default_device)
-                self.ema_state[key] = source.clone()
-
-
-def _log_trainable_state(model: torch.nn.Module):
-    model_core = model.module if hasattr(model, "module") else model
-    roi_head = getattr(model_core, "roi_head", None)
-    mask_head = getattr(roi_head, "mask_head", None)
-    checks = {
-        "backbone": getattr(model_core, "backbone", None),
-        "shared_image_embedding": getattr(model_core, "shared_image_embedding", None),
-        "mask_decoder": getattr(mask_head, "mask_decoder", None) if mask_head is not None else None,
-        "no_mask_embed": getattr(mask_head, "no_mask_embed", None) if mask_head is not None else None,
-        "prompt_encoder": getattr(mask_head, "prompt_encoder", None) if mask_head is not None else None,
-        "shape_injector": getattr(mask_head, "shape_injector", None) if mask_head is not None else None,
-        "p2_boundary_refiner": getattr(
-            mask_head, "p2_boundary_refiner", None
-        ) if mask_head is not None else None,
-    }
-    for name, module in checks.items():
-        if module is None:
-            logger.info("Trainable state %-22s absent", name)
-            continue
-        if isinstance(module, torch.nn.Parameter):
-            total = module.numel()
-            trainable = module.numel() if module.requires_grad else 0
-        else:
-            params = list(module.parameters())
-            total = sum(p.numel() for p in params)
-            trainable = sum(p.numel() for p in params if p.requires_grad)
-        logger.info("Trainable state %-22s %d / %d", name, trainable, total)
-
-
-def _log_prompt_debug_stats(
-    model: torch.nn.Module,
-    epoch: int,
-    step: int,
-    enabled_prefixes: Optional[set] = None,
-) -> None:
-    model_core = model.module if hasattr(model, "module") else model
-    getter = getattr(model_core, "get_prompt_debug_stats", None)
-    if getter is None:
-        return
-    stats = getter()
-    if not stats:
-        return
-    groups: Dict[str, Dict[str, float]] = {}
-    for key, value in sorted(stats.items()):
-        if torch.is_tensor(value):
-            if value.numel() != 1:
-                continue
-            value = float(value.detach().float().item())
-        if not isinstance(value, (int, float)):
-            continue
-        prefix, _, name = key.partition("/")
-        if not name:
-            continue
-        if enabled_prefixes is not None and prefix not in enabled_prefixes:
-            continue
-        groups.setdefault(prefix, {})[name] = float(value)
-    for prefix, values in groups.items():
-        payload = " ".join(f"{k}={v:.4g}" for k, v in values.items())
-        logger.info("[DEBUG-%s] epoch=%d step=%d %s", prefix, epoch + 1, step, payload)
-
-
-_DENSE_RESIDUAL_MONITOR_KEYS = (
-    "DENSE/residual_alpha",
-    "DENSE/source_delta_norm",
-    "DENSE/applied_delta_norm",
-    "DENSE/source_delta_ratio",
-    "DENSE/applied_delta_ratio",
-    "DENSE/canvas_mean",
-    "DENSE/canvas_std",
-    "DENSE/canvas_min",
-    "DENSE/canvas_max",
-    "GAUSSIAN/valid_ratio",
-    "GAUSSIAN/foreground_area_ratio",
-    "GAUSSIAN/edt_max",
-    "GAUSSIAN/center_x_normalized",
-    "GAUSSIAN/center_y_normalized",
-    "GAUSSIAN/canvas_area",
-)
-
-
-def _accumulate_dense_residual_monitor(
-    model: torch.nn.Module,
-    sums: Dict[str, float],
-    counts: Dict[str, int],
-) -> None:
-    """Accumulate detached dense-residual diagnostics from the latest forward."""
-    model_core = model.module if hasattr(model, "module") else model
-    getter = getattr(model_core, "get_prompt_debug_stats", None)
-    if getter is None:
-        return
-    stats = getter() or {}
-    for key in _DENSE_RESIDUAL_MONITOR_KEYS:
-        value = stats.get(key)
-        if torch.is_tensor(value):
-            if value.numel() != 1:
-                continue
-            value = float(value.detach().float().item())
-        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
-            continue
-        sums[key] += float(value)
-        counts[key] += 1
-
-
-def _reduce_dense_residual_monitor(
-    sums: Dict[str, float],
-    counts: Dict[str, int],
-    device: torch.device,
-    distributed: bool,
-) -> Dict[str, float]:
-    """Return rank-aggregated epoch means for the fixed dense monitor fields."""
-    packed = torch.tensor(
-        [
-            item
-            for key in _DENSE_RESIDUAL_MONITOR_KEYS
-            for item in (sums[key], float(counts[key]))
-        ],
-        dtype=torch.float64,
-        device=device,
-    )
-    if distributed and dist.is_initialized():
-        dist.all_reduce(packed, op=dist.ReduceOp.SUM)
-    result = {}
-    for index, key in enumerate(_DENSE_RESIDUAL_MONITOR_KEYS):
-        total = float(packed[2 * index].item())
-        count = float(packed[2 * index + 1].item())
-        if count > 0:
-            result[key] = total / count
-    return result
-
-
-_P2BR_EPOCH_FIELDS = (
-    "roi_count",
-    "valid_support_count",
-    "rejected_support_count",
-    "search_coverage_sum",
-    "delta_abs_sum",
-    "delta_nonzero_sum",
-    "delta_saturated_sum",
-    "projected_feature_norm_sum",
-    "highpass_feature_norm_sum",
-    "raw_dice_sum",
-    "raw_iou_sum",
-    "refined_dice_sum",
-    "refined_iou_sum",
-    "raw_boundary_tp",
-    "raw_boundary_fp",
-    "raw_boundary_fn",
-    "refined_boundary_tp",
-    "refined_boundary_fp",
-    "refined_boundary_fn",
-    "boundary_loss_local_sum",
-    "boundary_loss_valid_roi_count",
-    "boundary_loss_support_pixels",
-    "boundary_loss_foreground_pixels",
-)
-
-
-def _stat_scalar(stats: Dict[str, Any], key: str) -> Optional[float]:
-    value = stats.get(key)
-    if torch.is_tensor(value):
-        if value.numel() != 1:
-            return None
-        value = float(value.detach().float().item())
-    if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
-        return None
-    return float(value)
-
-
-def _accumulate_p2br_epoch_monitor(
-    model: torch.nn.Module, sums: Dict[str, float]
-) -> None:
-    model_core = model.module if hasattr(model, "module") else model
-    getter = getattr(model_core, "get_prompt_debug_stats", None)
-    if getter is None:
-        return
-    stats = getter() or {}
-    roi_count = _stat_scalar(stats, "P2BR/roi_count")
-    if roi_count is None:
-        return
-    direct = {
-        "roi_count": "P2BR/roi_count",
-        "valid_support_count": "P2BR/valid_support_count",
-        "rejected_support_count": "P2BR/rejected_support_count",
-        "search_coverage_sum": "P2BR/search_coverage_sum",
-        "delta_abs_sum": "P2BR/delta_abs_sum",
-        "delta_nonzero_sum": "P2BR/delta_nonzero_sum",
-        "delta_saturated_sum": "P2BR/delta_saturated_sum",
-        "projected_feature_norm_sum": "P2BR/projected_feature_norm_sum",
-        "highpass_feature_norm_sum": "P2BR/highpass_feature_norm_sum",
-        "raw_boundary_tp": "COARSE/raw_boundary_tp",
-        "raw_boundary_fp": "COARSE/raw_boundary_fp",
-        "raw_boundary_fn": "COARSE/raw_boundary_fn",
-        "refined_boundary_tp": "COARSE/refined_boundary_tp",
-        "refined_boundary_fp": "COARSE/refined_boundary_fp",
-        "refined_boundary_fn": "COARSE/refined_boundary_fn",
-        "boundary_loss_local_sum": "COARSE/boundary_loss_local_sum",
-        "boundary_loss_valid_roi_count": "COARSE/loss_valid_roi_count",
-        "boundary_loss_support_pixels": "COARSE/loss_support_pixel_sum",
-        "boundary_loss_foreground_pixels": "COARSE/loss_support_foreground_sum",
-    }
-    for out_key, stat_key in direct.items():
-        value = _stat_scalar(stats, stat_key)
-        if value is not None:
-            sums[out_key] += value
-    for out_key, stat_key in (
-        ("raw_dice_sum", "COARSE/raw_dice_score"),
-        ("raw_iou_sum", "COARSE/raw_iou"),
-        ("refined_dice_sum", "COARSE/refined_dice_score"),
-        ("refined_iou_sum", "COARSE/refined_iou"),
-    ):
-        value = _stat_scalar(stats, stat_key)
-        if value is not None:
-            sums[out_key] += value * roi_count
-
-
-def _reduce_p2br_epoch_monitor(
-    sums: Dict[str, float], device: torch.device, distributed: bool
-) -> Dict[str, float]:
-    packed = torch.tensor(
-        [sums[key] for key in _P2BR_EPOCH_FIELDS],
-        dtype=torch.float64,
-        device=device,
-    )
-    if distributed and dist.is_initialized():
-        dist.all_reduce(packed, op=dist.ReduceOp.SUM)
-    values = {
-        key: float(packed[index].item())
-        for index, key in enumerate(_P2BR_EPOCH_FIELDS)
-    }
-    roi_count = values["roi_count"]
-    if roi_count <= 0:
-        return {}
-    valid_count = max(values["valid_support_count"], 1.0)
-    loss_count = max(values["boundary_loss_valid_roi_count"], 1.0)
-
-    def _boundary_f1(prefix: str) -> float:
-        tp = values[f"{prefix}_boundary_tp"]
-        fp = values[f"{prefix}_boundary_fp"]
-        fn = values[f"{prefix}_boundary_fn"]
-        return (2.0 * tp) / max(2.0 * tp + fp + fn, 1e-12)
-
-    return {
-        "roi_count": roi_count,
-        "valid_support_ratio": values["valid_support_count"] / roi_count,
-        "rejected_support_ratio": values["rejected_support_count"] / roi_count,
-        "search_coverage": values["search_coverage_sum"] / roi_count,
-        "delta_abs": values["delta_abs_sum"] / roi_count,
-        "delta_nonzero_ratio": values["delta_nonzero_sum"] / roi_count,
-        "delta_saturated_ratio": values["delta_saturated_sum"] / roi_count,
-        "projected_feature_norm": values["projected_feature_norm_sum"] / roi_count,
-        "highpass_feature_norm": values["highpass_feature_norm_sum"] / roi_count,
-        "raw_dice": values["raw_dice_sum"] / roi_count,
-        "raw_iou": values["raw_iou_sum"] / roi_count,
-        "refined_dice": values["refined_dice_sum"] / roi_count,
-        "refined_iou": values["refined_iou_sum"] / roi_count,
-        "raw_boundary_f1": _boundary_f1("raw"),
-        "refined_boundary_f1": _boundary_f1("refined"),
-        "boundary_loss_raw": values["boundary_loss_local_sum"] / loss_count,
-        "boundary_support_fg_ratio": values["boundary_loss_foreground_pixels"]
-        / max(values["boundary_loss_support_pixels"], 1.0),
-        "valid_count_for_norm": valid_count,
-    }
-
-
-def _save_checkpoint(
-    path: Path,
-    model: torch.nn.Module,
-    optimizer: optim.Optimizer,
-    scheduler: optim.lr_scheduler._LRScheduler,
-    epoch: int,
-    best_metrics: Dict,
-    history: Dict,
-    config_snapshot: Optional[Dict] = None,
-    scaler: Optional[Any] = None,
-    ema_state: Optional[Dict] = None,
-):
-    """Save checkpoint with model, optimizer, scheduler, config, and training state.
-
-    Saves to a temporary file first, then atomically renames to avoid corruption.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    model_to_save = model.module if hasattr(model, "module") else model
-    ckpt = {
-        "checkpoint_schema_version": int(
-            (config_snapshot or {}).get("checkpoint_schema_version", 0)
-        ),
-        "model": model_to_save.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "scheduler": scheduler.state_dict(),
-        "epoch": epoch,
-        "best_metrics": best_metrics,
-        "history": history,
-        "config_snapshot": config_snapshot or {},
-        "architecture_contract": (config_snapshot or {}).get(
-            "architecture_contract", {}
-        ),
-    }
-    if scaler is not None:
-        ckpt["scaler"] = scaler.state_dict()
-    if ema_state is not None:
-        ckpt["ema_state"] = ema_state
-    # Atomic save: write to .tmp then rename
-    tmp_path = path.with_suffix(".pth.tmp")
-    torch.save(ckpt, str(tmp_path))
-    tmp_path.replace(path)
-
-
-def _load_checkpoint(
-    path: Path,
-    model: torch.nn.Module,
-    optimizer: Optional[optim.Optimizer] = None,
-    scheduler: Optional[optim.lr_scheduler._LRScheduler] = None,
-    scaler: Optional[Any] = None,
-    expected_architecture: Optional[Dict] = None,
-) -> Dict:
-    ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
-    if expected_architecture is not None:
-        from rsprompter.architecture_contract import assert_checkpoint_architecture
-
-        assert_checkpoint_architecture(
-            ckpt, expected_architecture, operation="RESUME", allow_cross_arch=False
-        )
-    model_to_load = model.module if hasattr(model, "module") else model
-    # RESUME requires the resumed model structure to match exactly.
-    model_to_load.load_state_dict(ckpt["model"], strict=True)
-    if int(os.environ.get("RANK", "0")) == 0:
-        logger.info("RESUME model load: strict=True (all keys matched)")
-    _assert_no_mask_embedding_contract(model_to_load, "RESUME checkpoint load")
-    if optimizer is not None and "optimizer" in ckpt:
-        optimizer.load_state_dict(ckpt["optimizer"])
-    if scheduler is not None and "scheduler" in ckpt:
-        scheduler.load_state_dict(ckpt["scheduler"])
-    if scaler is not None and "scaler" in ckpt:
-        scaler.load_state_dict(ckpt["scaler"])
-    return ckpt
-
-
-
-
-
-def _load_init_checkpoint(
-    path: Path,
-    model: torch.nn.Module,
-    exclude_prefixes: Tuple[str, ...] = (),
-    expected_architecture: Optional[Dict] = None,
-    allow_cross_arch: bool = False,
-) -> Dict[str, object]:
-    """Load matching tensors for initialization, with explicit legacy migration."""
-    ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
-    if expected_architecture is not None:
-        from rsprompter.architecture_contract import assert_checkpoint_architecture
-
-        assert_checkpoint_architecture(
-            ckpt,
-            expected_architecture,
-            operation="INIT_FROM",
-            allow_cross_arch=allow_cross_arch,
-        )
-    source_state = ckpt.get("model", ckpt)
-    model_to_load = model.module if hasattr(model, "module") else model
-    target_state = model_to_load.state_dict()
-    from rsprompter.ckpt_migration import migrate_legacy_shape_gate_state_dict
-
-    source_state, migrations = migrate_legacy_shape_gate_state_dict(
-        source_state, target_state
-    )
-
-    compatible = {}
-    excluded = 0
-    shape_mismatch = 0
-    unexpected = 0
-    for name, value in source_state.items():
-        if any(name.startswith(prefix) for prefix in exclude_prefixes):
-            excluded += 1
-            continue
-        if name not in target_state:
-            unexpected += 1
-            continue
-        if target_state[name].shape != value.shape:
-            shape_mismatch += 1
-            continue
-        compatible[name] = value
-
-    load_result = model_to_load.load_state_dict(compatible, strict=False)
-    _assert_no_mask_embedding_contract(model_to_load, "INIT_FROM checkpoint load")
-    return {
-        "loaded": len(compatible),
-        "excluded": excluded,
-        "shape_mismatch": shape_mismatch,
-        "unexpected": unexpected,
-        "missing": len(load_result.missing_keys),
-        "migrated": len(migrations),
-        "migration_pairs": migrations,
-    }
-
-
-_CANONICAL_DETECTION_LOSS_KEYS = {
-    "loss_rpn_cls",
-    "loss_rpn_bbox",
-    "loss_cls",
-    "loss_bbox",
-    "loss_bbox_cls",
-    "loss_bbox_reg",
-}
-
-
-def _set_model_current_epoch(model, epoch_number: int) -> None:
-    """Set 1-based epoch on modules with epoch-dependent schedules."""
-    core = model.module if hasattr(model, "module") else model
-    seen = set()
-    for module in core.modules():
-        if id(module) in seen:
-            continue
-        seen.add(id(module))
-        setter = getattr(module, "set_current_epoch", None)
-        if callable(setter):
-            setter(int(epoch_number))
-
-
-def _detection_loss_weight(args, epoch_number: int) -> float:
-    if epoch_number <= int(args.det_loss_stage1_end):
-        return float(args.det_loss_weight_stage1)
-    if epoch_number <= int(args.det_loss_stage2_end):
-        return float(args.det_loss_weight_stage2)
-    return float(args.det_loss_weight_stage3)
-
-
-def _scale_loss_value(value, scale: float):
-    if isinstance(value, torch.Tensor):
-        return value * float(scale)
-    if isinstance(value, list):
-        return [_scale_loss_value(item, scale) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_scale_loss_value(item, scale) for item in value)
-    return value
-
-
-def _apply_detection_loss_weight(loss_dict: dict, scale: float, device) -> dict:
-    """Scale detector losses as one group without changing their ratios."""
-    for key in list(loss_dict.keys()):
-        if key in _CANONICAL_DETECTION_LOSS_KEYS or key.startswith("loss_rpn_"):
-            loss_dict[key] = _scale_loss_value(loss_dict[key], scale)
-    loss_dict["schedule/det_weight"] = torch.tensor(
-        float(scale), device=device
-    )
-    return loss_dict
-
-
-def _materialize_p2_boundary_refiner_loss(
-    loss_dict: dict,
-    model: torch.nn.Module,
-    distributed: bool,
-) -> dict:
-    """Convert local ROI sums into a four-rank global per-ROI mean.
-
-    DDP averages gradients across ranks. Multiplying the local sum by
-    ``world_size / global_count`` therefore yields the exact mean over all
-    valid ROIs in the current micro-batch. Gradient accumulation keeps the
-    historical equal-micro-batch contract.
-    """
-    local_sum = loss_dict.pop("_p2br_local_sum", None)
-    local_count = loss_dict.pop("_p2br_valid_count", None)
-    if local_sum is None and local_count is None:
-        return loss_dict
-    if not torch.is_tensor(local_sum) or not torch.is_tensor(local_count):
-        raise TypeError("P2 boundary refiner loss metadata must be tensors")
-    global_count = local_count.detach().float().clone()
-    world_size = 1
-    if distributed and dist.is_initialized():
-        dist.all_reduce(global_count, op=dist.ReduceOp.SUM)
-        world_size = dist.get_world_size()
-
-    model_core = model.module if hasattr(model, "module") else model
-    mask_head = getattr(getattr(model_core, "roi_head", None), "mask_head", None)
-    refiner = getattr(mask_head, "p2_boundary_refiner", None)
-    if refiner is None:
-        raise RuntimeError("received P2 refiner loss metadata without the module")
-    if float(global_count.item()) > 0:
-        normalized = local_sum * (
-            float(world_size) / float(global_count.item())
-        )
-    else:
-        normalized = local_sum * 0.0
-    loss_dict["loss_p2_boundary_refiner"] = (
-        float(refiner.boundary_loss_weight) * normalized
-    )
-    return loss_dict
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def main():

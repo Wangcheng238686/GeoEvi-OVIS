@@ -9,7 +9,6 @@ import os
 
 _base_ = ["./rsprompter_anchor_satS_v11_sam2_large_full.py"]
 
-data_root = os.environ.get("WHU1024_DATA_ROOT", "/data/wangcheng/dataset/WHU")
 sam2_ckpt_path = os.environ.get(
     "SAM2_CKPT",
     "/data/wangcheng/pretrained-models/sam2/sam2_hiera_base_plus.pt",
@@ -66,57 +65,4 @@ model = dict(
             p2_boundary_refiner_cfg=dict(enabled=False),
         ),
     ),
-)
-
-dataset_type = "WHUCocoSingleClass"
-train_pipeline = [
-    dict(type="LoadImageFromFile"),
-    dict(type="LoadAnnotations", with_bbox=True, with_mask=True, poly2mask=False),
-    dict(type="Resize", scale=(1024, 1024), keep_ratio=False),
-    dict(type="RandomFlip", prob=0.5),
-    dict(type="PackDetInputs"),
-]
-test_pipeline = [
-    dict(type="LoadImageFromFile"),
-    dict(type="Resize", scale=(1024, 1024), keep_ratio=False),
-    dict(type="LoadAnnotations", with_bbox=True, with_mask=True, poly2mask=False),
-    dict(
-        type="PackDetInputs",
-        meta_keys=("img_id", "img_path", "ori_shape", "img_shape", "scale_factor"),
-    ),
-]
-train_dataloader = dict(
-    dataset=dict(
-        type=dataset_type,
-        data_root=data_root,
-        ann_file="2.4 annotation/annotation/train.json",
-        data_prefix=dict(img="2.1 train/train"),
-        pipeline=train_pipeline,
-    )
-)
-val_dataloader = dict(
-    dataset=dict(
-        type=dataset_type,
-        data_root=data_root,
-        ann_file="2.4 annotation/annotation/validation.json",
-        data_prefix=dict(img="2.3 valid/validation"),
-        pipeline=test_pipeline,
-        test_mode=True,
-    )
-)
-test_dataloader = dict(
-    dataset=dict(
-        type=dataset_type,
-        data_root=data_root,
-        ann_file="2.4 annotation/annotation/test.json",
-        data_prefix=dict(img="2.2 test/test"),
-        pipeline=test_pipeline,
-        test_mode=True,
-    )
-)
-val_evaluator = dict(
-    ann_file=os.path.join(data_root, "2.4 annotation/annotation/validation.json")
-)
-test_evaluator = dict(
-    ann_file=os.path.join(data_root, "2.4 annotation/annotation/test.json")
 )

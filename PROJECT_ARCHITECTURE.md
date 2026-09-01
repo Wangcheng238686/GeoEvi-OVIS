@@ -306,7 +306,13 @@ loss，不做 rank-local 跳过。不同 DDP rank 的 `DistributedSampler` shard
 | 文件 | 用途 |
 |---|---|
 | `__init__.py` | 训练包标记。 |
-| `train.py` | DDP 训练主入口；负责配置构建、参数组、EMA、checkpoint、断点恢复、COCO bbox/segm 验证和子集参数。 |
+| `train.py` | DDP 训练主入口与编排（CLI、配置构建、训练/验证循环、checkpoint 调度）；helper 已拆分至同目录子模块。 |
+| `train/eval_metrics.py` | COCO GT/DT 构造、bbox/segm COCOeval、RLE 编码、指标表达式解析。 |
+| `train/distributed.py` | DDP/gloo 初始化、rank-0 延迟控制广播、两层 DDP timeout 解析、git 状态采集。 |
+| `train/optim.py` | 分组优化器构建、norm eval、`ExponentialMovingAverage`。 |
+| `train/checkpointing.py` | verified best/常规 checkpoint 保存、RESUME 严格加载、INIT_FROM 迁移。 |
+| `train/monitors.py` | prompt/coarse 诊断日志、dense residual 与 P2-BRR epoch 监控。 |
+| `train/losses.py` | detector loss 阶段权重、coarse/final loss 缩放与 P2-BRR loss 物化。 |
 
 常用 CLI：
 
@@ -776,6 +782,18 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 处理本项目的新增或改动时，它负责默认执行上述同步流程。
 
 ## 8. 文档同步记录
+
+- 2026-09-01：C 级第 1、3 项完成并验证。C1：`train/train.py`（原
+  3249 行）的 41 个顶层 helper 按职责机械拆分至
+  `train/{eval_metrics,distributed,optim,checkpointing,monitors,losses}.py`
+  （train.py 剩 2106 行，仅保留 import、编排入口 `main` 与其内部逻辑，
+  拆分纯搬家零改动）。C3：删除 clean 配置中不被 trainer 消费的
+  dataloader/evaluator 死段与 `data_root`；mask head 移除 legacy 兼容参数
+  `mask_coordinate_mode`/`coarse_mask_coordinate_mode`/
+  `load_pe_pretrained`/`sam2_ckpt_for_pe`（coarse 坐标恒 ROI-local，
+  PE 预训练要求恒 True）。验证：`py_compile`、`train.train` 导入、
+  双进程 CPU/Gloo 控制面 smoke 通过；以 `a3d7bb0` 为基准的 7 架构等价
+  探针 7/7 逐位一致。
 
 - 2026-09-01：C 级重构第 2 项完成——`prompt_sparse_mode` 由四模式收敛为
   `point`/`shape_point` 两种（`box`、`point_box` 在 B 级清理后已无任何

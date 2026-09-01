@@ -1075,8 +1075,6 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
         prompt_encoder_enabled: bool = False,      # 是否接回 SAM2 原生 PromptEncoder
         prompt_encoder_image_size: int = 512,      # input_image_size, 与图一致
         prompt_encoder_embed_size: int = 16,       # image_embedding_size, 实测 512→16×16
-        load_pe_pretrained: bool = True,           # 加载 sam_prompt_encoder.* 预训练权重 (对比项目遗漏)
-        sam2_ckpt_for_pe: Optional[str] = None,    # PE 权重来源, 默认复用 decoder ckpt
         prompt_encoder_cfg: Optional[Dict] = None, # 问题 3：PE 严格加载/冻结统一配置（见下）
         dense_prompt_mode: str = "none",           # "none"(no_mask 常量) / "residual"(+ROI 残差, 零初始化)
         prune_unused_prompt_components: bool = False,
@@ -1087,11 +1085,8 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
         # - final_mask_coordinate_mode：最终实例 mask 的监督/后处理坐标系。
         #   B0/B1 用 "roi_local" 复现旧口径；显式 coarse 路线使用 SAM2 原生
         #   "full_image" 网格，训练对齐整图 target，推理只 resize 一次。
-        # 旧的统一 mask_coordinate_mode 参数保留为兼容入口（见下方解析）。
-        coarse_mask_coordinate_mode: str = "roi_local",
         final_mask_coordinate_mode: str = "roi_local",
         final_mask_loss_cfg: Optional[Dict] = None,
-        mask_coordinate_mode: Optional[str] = None,  # 兼容旧参数，None 时用上面两个默认
         roi_mask_size: int = 28,
         # 问题 13：mask_head 级别的 checkpoint 严格加载配置（透传给 PE；decoder/backbone 各自接收）
         checkpoint_load_cfg: Optional[Dict] = None,
@@ -1185,26 +1180,13 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
         self.prompt_encoder_mask_size = self.prompt_encoder_embed_size * 4
         self.prune_unused_prompt_components = bool(prune_unused_prompt_components)
         # 问题 1（审查重构）：coarse / final 双坐标语义，禁止混用。
-        # 旧的统一 mask_coordinate_mode 仅作兼容入口：若显式传入则覆盖到对应字段并校验。
-        self.coarse_mask_coordinate_mode = str(coarse_mask_coordinate_mode).lower()
+        self.coarse_mask_coordinate_mode = "roi_local"
         self.final_mask_coordinate_mode = str(final_mask_coordinate_mode).lower()
-        for _mode_name, _mode_val in (
-            ("coarse_mask_coordinate_mode", self.coarse_mask_coordinate_mode),
-            ("final_mask_coordinate_mode", self.final_mask_coordinate_mode),
-        ):
-            if _mode_val not in ("full_image", "roi_local"):
-                raise ValueError(
-                    f"{_mode_name} must be 'full_image' or 'roi_local', got {_mode_val!r}"
-                )
-        # 兼容旧参数：若传了 mask_coordinate_mode，则同时作用于两者（向后兼容旧 config）
-        if mask_coordinate_mode is not None:
-            _legacy = str(mask_coordinate_mode).lower()
-            if _legacy not in ("full_image", "roi_local"):
-                raise ValueError(
-                    f"mask_coordinate_mode must be 'full_image' or 'roi_local', got {mask_coordinate_mode!r}"
-                )
-            self.coarse_mask_coordinate_mode = _legacy
-            self.final_mask_coordinate_mode = _legacy
+        if self.final_mask_coordinate_mode not in ("full_image", "roi_local"):
+            raise ValueError(
+                "final_mask_coordinate_mode must be 'full_image' or 'roi_local', "
+                f"got {self.final_mask_coordinate_mode!r}"
+            )
         # Coarse logits are always ROI-local.  Final SAM2 logits may retain the
         # historical ROI-local interpretation for the frozen B0/B1 reproduction,
         # or use their native full-image grid in the explicit-coarse route.
@@ -1231,7 +1213,6 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
         self.final_mask_loss_cfg = ConfigDict(_final_loss_cfg)
         self.roi_mask_size = int(roi_mask_size)
         # 问题 3：PromptEncoder 严格加载/冻结统一配置。
-        # 向后兼容：旧的 load_pe_pretrained / sam2_ckpt_for_pe 裸参数仍可用，
         # 但若提供了 prompt_encoder_cfg，则以 cfg 为准（更细粒度）。
         self.checkpoint_load_cfg = dict(checkpoint_load_cfg or {})
         _pe_cfg = dict(prompt_encoder_cfg or {})
@@ -1247,8 +1228,7 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
                 f"{sorted(_unknown_pe_cfg_keys)}"
             )
         # 旧参数 → cfg 默认值（仅当 cfg 未显式指定时）
-        _pe_cfg.setdefault("require_pretrained", bool(load_pe_pretrained))
-        _pe_cfg.setdefault("ckpt_path", sam2_ckpt_for_pe)
+        _pe_cfg.setdefault("require_pretrained", True)
         _pe_cfg.setdefault("freeze_all", True)
         self.prompt_encoder_cfg = _pe_cfg
         # 暴露给后续加载逻辑使用的扁平字段（保持旧代码可读）
@@ -1362,7 +1342,7 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
             # 加载预训练权重 (对比项目遗漏, 本计划增量)
             # 问题 3：require_pretrained 默认 True——ckpt 不存在或 missing key 时直接 raise，
             # 避免静默随机初始化导致 PE 几何编码错误却继续训练。
-            if load_pe_pretrained or self._pe_require_pretrained:
+            if self._pe_require_pretrained:
                 _ck_path = _resolve_sam2_checkpoint_path(
                     self._pe_cfg_path or sam2_mask_decoder.get("checkpoint_path")
                 )
