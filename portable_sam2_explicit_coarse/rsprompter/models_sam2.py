@@ -1069,7 +1069,7 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
         output_attentions=None,
         class_agnostic=False,
         # ===== Prompt 编码迁移 (阶段1) =====
-        # sparse prompt 三模式: "point"(point_emb) / "box"(SAM2 PE box) / "point_box"(concat)
+        # sparse prompt 两模式: "point"(MLP point_emb 桥接) / "shape_point"(显式 coarse→PE)
         prompt_sparse_mode: str = "point",
         explicit_prompt_mode: Optional[str] = None,
         prompt_encoder_enabled: bool = False,      # 是否接回 SAM2 原生 PromptEncoder
@@ -1130,6 +1130,11 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
 
         # Prompt 编码开关
         self.prompt_sparse_mode = str(prompt_sparse_mode)
+        if self.prompt_sparse_mode not in ("point", "shape_point"):
+            raise ValueError(
+                "prompt_sparse_mode must be 'point' or 'shape_point', got "
+                f"{self.prompt_sparse_mode!r}"
+            )
         _explicit_mode_was_provided = explicit_prompt_mode is not None
         if self.prompt_sparse_mode == "shape_point":
             if explicit_prompt_mode is None:
@@ -1141,13 +1146,10 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
                     else "points_box"
                 )
             self.explicit_prompt_mode = str(explicit_prompt_mode).strip().lower()
-            _valid_explicit_modes = {
-                "points", "box", "mask", "points_box", "points_box_dense"
-            }
+            _valid_explicit_modes = {"points_box", "points_box_dense"}
             if self.explicit_prompt_mode not in _valid_explicit_modes:
                 raise ValueError(
-                    "explicit_prompt_mode must be points, box, mask, "
-                    "points_box or "
+                    "explicit_prompt_mode must be points_box or "
                     f"points_box_dense, got {self.explicit_prompt_mode!r}"
                 )
             self.explicit_use_point_prompt = self.explicit_prompt_mode in {
@@ -1420,7 +1422,7 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
                         "prune_unused_prompt_components requires shape_prior_cfg.enabled=True"
                     )
                 # shape_point 模式需要 point_embeddings[0]/[1]（前景点/背景点），不能 prune
-                if self.prompt_sparse_mode != "shape_point":
+                if self.prompt_sparse_mode == "point":
                     # points=None and masks=shape_prompt are invariant in this path.
                     # Indices 2/3 remain because SAM2 uses them for box corners.
                     self.prompt_encoder.point_embeddings[0] = _UnusedPromptEmbedding()
@@ -1436,12 +1438,13 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
             self.prompt_encoder = None
 
         # === point_emb (RSPrompter 自造 5 点) ===
-        # prompt_sparse_mode="box" / "shape_point" 时不实例化 → 省 DDP unused params
-        # SAM2 decoder expects sparse_prompt_embeddings with dim=256 (matching image_embeddings)
+        # Only the MLP bridge ("point") instantiates it; shape_point uses the
+        # frozen SAM2 PromptEncoder instead.  SAM2 decoder expects
+        # sparse_prompt_embeddings with dim=256 (matching image_embeddings).
         # Output: (batch, per_pointset_point, 256)
         num_sincos = 2 if with_sincos else 1
         embed_dim = 256  # Match SAM2 decoder embedding dimension
-        if self.prompt_sparse_mode not in ("box", "shape_point"):
+        if self.prompt_sparse_mode == "point":
             self.point_emb = nn.Sequential(
                 nn.Conv2d(in_channels, in_channels, 3, stride=2, padding=1),
                 nn.BatchNorm2d(in_channels),
@@ -1904,10 +1907,8 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
         debug_stats: Dict[str, float] = {}
         prompt_geometry_boxes = boxes
 
-        # === sparse_embeddings 三模式 ===
+        # === sparse_embeddings ===
         # point: RSPrompter 自造 point_emb [N,5,256]
-        # box:   SAM2 原生 PE box 角点 [N,2,256]
-        # point_box: concat 两者 [N,7,256]
         point_embs = None
         if self.point_emb is not None:
             pe = self.point_emb(x)
@@ -1979,7 +1980,6 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
                 shape_prior_prompt_logits = None
 
         # === PE 单次调用: box → sparse_pe, mask → dense_pe ===
-        box_embs = None
         dense_pe = None
         if self.prompt_encoder is not None and boxes is not None:
             # 批次2 子任务4：sparse-only(use_shape_dense=False)时不传 mask 给 PE（审查 2.3）
@@ -1999,6 +1999,7 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
                 debug_stats["DENSE/canvas_max"] = _dense_dbg.max()
                 debug_stats["DENSE/canvas_nonzero_ratio"] = (_dense_dbg != 0).float().mean()
             # === shape_point 模式: 从 shape_prior_mask 挖点，一次 PE 调用编码点+box+mask ===
+            # (prompt_sparse_mode 只剩 point/shape_point，point 不带 PromptEncoder)
             if self.prompt_sparse_mode == "shape_point":
                 if shape_prior_mask_logits is None:
                     raise ValueError(
@@ -2053,12 +2054,6 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
                     self.explicit_use_dense_prompt
                 )
                 # points: [N,4,256]; points_box(_dense): [N,6,256].
-                box_embs = None  # explicit shape-point mode keeps PE output unified
-            else:
-                sparse_pe, dense_pe_from_pe = self.prompt_encoder(
-                    points=None, boxes=boxes, masks=masks_for_pe,
-                )
-                box_embs = sparse_pe  # [N, 2, 256]
             if masks_for_pe is not None:
                 dense_pe = dense_pe_from_pe  # [N,256,Hemb,Wemb], 1024输入通常为32x32
         else:
@@ -2066,13 +2061,6 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
 
         if self.prompt_sparse_mode == "point":
             sparse_embeddings = point_embs                                    # [N,5,256]
-        elif self.prompt_sparse_mode == "box":
-            if box_embs is None:
-                raise ValueError(
-                    "prompt_sparse_mode='box' requires prompt_encoder_enabled=True "
-                    "and boxes to be provided"
-                )
-            sparse_embeddings = box_embs                                      # [N,2,256]
         elif self.prompt_sparse_mode == "shape_point":
             # PE output is [N,4,256] for points, or [N,6,256] when box tokens are enabled.
             if sparse_pe is None:
@@ -2081,16 +2069,9 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
                     "shape_prior enabled, and boxes to be provided"
                 )
             sparse_embeddings = sparse_pe                                     # [N,4 or 6,256]
-        elif self.prompt_sparse_mode == "point_box":
-            if point_embs is None or box_embs is None:
-                raise ValueError(
-                    "prompt_sparse_mode='point_box' requires point embeddings, "
-                    "prompt_encoder_enabled=True, and boxes to be provided"
-                )
-            sparse_embeddings = torch.cat([point_embs, box_embs], dim=1)      # [N,7,256]
         else:
             raise ValueError(f"Unknown prompt_sparse_mode='{self.prompt_sparse_mode}', "
-                             f"expected 'point'/'box'/'point_box'/'shape_point'")
+                             f"expected 'point'/'shape_point'")
 
         num_roi_per_image = torch.bincount(
             roi_img_ids.long(), minlength=img_bs,
