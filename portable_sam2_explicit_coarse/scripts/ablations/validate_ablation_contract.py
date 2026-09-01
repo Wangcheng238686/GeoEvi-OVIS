@@ -64,7 +64,7 @@ def main():
     from mmengine import Config
 
     cfg = Config.fromfile(str(PROJECT_ROOT / args.config))
-    from rsprompter.architecture_contract import architecture_contract
+    from models.architecture_contract import architecture_contract
 
     resolved_architecture = architecture_contract(cfg.model.to_dict())
     require(
@@ -363,7 +363,7 @@ def main():
 
         init_default_scope("mmdet")
         import data  # noqa: F401
-        import rsprompter  # noqa: F401
+        import models  # noqa: F401
         from mmdet.registry import MODELS
 
         model = MODELS.build(cfg.model)
@@ -498,7 +498,7 @@ def main():
                 base_dense = mask_head.no_mask_embed.reshape(1, -1, 1, 1).expand_as(
                     encoded_dense
                 )
-                from rsprompter.dense_prompt_utils import (
+                from models.dense_prompt_utils import (
                     replace_invalid_dense_with_base,
                 )
                 restored = replace_invalid_dense_with_base(

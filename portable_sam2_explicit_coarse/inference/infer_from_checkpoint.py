@@ -287,7 +287,7 @@ def _resolve_model_config(
     saved_contract = snapshot.get("architecture_contract", {})
     if saved_contract:
         from mmengine.config import Config
-        from rsprompter.architecture_contract import architecture_contract
+        from models.architecture_contract import architecture_contract
 
         resolved_contract = architecture_contract(model_config)
         if (
@@ -350,7 +350,7 @@ def _resolve_model_config(
             else None
         )
         if saved_sha256:
-            from rsprompter.architecture_contract import file_sha256
+            from models.architecture_contract import file_sha256
 
             actual_sha256 = file_sha256(sam2_checkpoint)
             if actual_sha256 != saved_sha256:
@@ -376,7 +376,7 @@ def _register_and_build(model_config: Mapping[str, Any]):
             module=DetDataPreprocessor,
         )
     import data  # noqa: F401
-    import rsprompter  # noqa: F401
+    import models  # noqa: F401
 
     init_default_scope("mmdet")
     return MODELS.build(ConfigDict(copy.deepcopy(dict(model_config))))

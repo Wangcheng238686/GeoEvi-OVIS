@@ -359,7 +359,7 @@ def main():
             name="DetDataPreprocessor", module=DetDataPreprocessor
         )
 
-    import rsprompter
+    import models
 
     # === 固定随机种子 (可复现) ===
     import random as _random
@@ -406,13 +406,13 @@ def main():
             )
 
     cfg = Config.fromfile(args.config)
-    from rsprompter.architecture_contract import architecture_contract
+    from models.architecture_contract import architecture_contract
 
     resolved_architecture = architecture_contract(cfg.model.to_dict())
     sam2_checkpoint_path = os.environ.get("SAM2_CKPT", "")
     sam2_identity = [sam2_checkpoint_path, ""]
     if is_main and sam2_checkpoint_path:
-        from rsprompter.architecture_contract import file_sha256
+        from models.architecture_contract import file_sha256
 
         sam2_identity[1] = file_sha256(sam2_checkpoint_path)
     if distributed and dist.is_initialized():
@@ -1202,7 +1202,7 @@ def main():
                     _project_root = Path(__file__).resolve().parents[1]
                     _vis_cmd = [
                         _sys.executable,
-                        "scripts/visualize_instances.py",
+                        "tools/visualize_instances.py",
                         "pred",
                         "--pred-json",
                         str(_pred_json),

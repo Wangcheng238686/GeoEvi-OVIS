@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Monitor that waits until all four GPUs are free (no train_rsprompter process),
+# Monitor that waits until all four GPUs are free (no train/train.py process),
 # then launches the ue_coco R1-C4-RD experiment on all 4 cards.
 #
 # Run detached:
@@ -25,17 +25,17 @@ echo "============================================================"
 echo "${MONITOR_TAG} started at $(date '+%Y-%m-%d %H:%M:%S')"
 echo "monitor_log=${MONITOR_LOG}"
 echo "poll_seconds=${POLL_SECONDS}"
-echo "plan: when no train_rsprompter process is alive, launch"
+echo "plan: when no train/train.py process is alive, launch"
 echo "  ue_coco R1-C4-RD on all 4 GPUs (CUDA_VISIBLE_DEVICES=0,1,2,3)"
 echo "============================================================"
 
 while true; do
-  running="$(ps aux | grep 'train_rsprompter' | grep -v grep | wc -l)"
+  running="$(ps aux | grep 'train/train.py' | grep -v grep | wc -l)"
   if [ "${running}" -eq 0 ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - no train_rsprompter process; GPUs free. Launching ue_coco R1-C4-RD."
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - no train/train.py process; GPUs free. Launching ue_coco R1-C4-RD."
     break
   fi
-  echo "$(date '+%Y-%m-%d %H:%M:%S') - ${running} train_rsprompter process(es) still running; sleeping ${POLL_SECONDS}s."
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - ${running} train/train.py process(es) still running; sleeping ${POLL_SECONDS}s."
   sleep "${POLL_SECONDS}"
 done
 

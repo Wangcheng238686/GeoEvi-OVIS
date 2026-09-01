@@ -125,7 +125,7 @@ def _load_checkpoint(
 ) -> Dict:
     ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
     if expected_architecture is not None:
-        from rsprompter.architecture_contract import assert_checkpoint_architecture
+        from models.architecture_contract import assert_checkpoint_architecture
 
         assert_checkpoint_architecture(
             ckpt, expected_architecture, operation="RESUME", allow_cross_arch=False
@@ -154,7 +154,7 @@ def _load_init_checkpoint(
     """Load matching tensors for initialization, with explicit legacy migration."""
     ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
     if expected_architecture is not None:
-        from rsprompter.architecture_contract import assert_checkpoint_architecture
+        from models.architecture_contract import assert_checkpoint_architecture
 
         assert_checkpoint_architecture(
             ckpt,
@@ -165,7 +165,7 @@ def _load_init_checkpoint(
     source_state = ckpt.get("model", ckpt)
     model_to_load = model.module if hasattr(model, "module") else model
     target_state = model_to_load.state_dict()
-    from rsprompter.ckpt_migration import migrate_legacy_shape_gate_state_dict
+    from models.ckpt_migration import migrate_legacy_shape_gate_state_dict
 
     source_state, migrations = migrate_legacy_shape_gate_state_dict(
         source_state, target_state

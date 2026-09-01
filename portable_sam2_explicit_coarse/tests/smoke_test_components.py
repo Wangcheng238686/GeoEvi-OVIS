@@ -14,18 +14,18 @@ from mmengine import ConfigDict
 from mmengine.structures import InstanceData
 from mmdet.structures.mask import BitmapMasks
 
-from rsprompter.coarse_mask_loss import CoarseMaskLoss
-from rsprompter.dense_prompt_utils import paste_roi_to_full_canvas
-from rsprompter.p2_boundary_refiner import P2BoundaryRefiner
-from rsprompter.models_sam2 import (
+from models.coarse_mask_loss import CoarseMaskLoss
+from models.dense_prompt_utils import paste_roi_to_full_canvas
+from models.p2_boundary_refiner import P2BoundaryRefiner
+from models.models_sam2 import (
     RSSAM2PAFPN,
     RSSAM2PositionalEmbedding,
     RSPrompterAnchorMaskHeadSAM2,
     _load_pretrained_no_mask_embedding,
 )
-from rsprompter.models import RSPrompterAnchor
-import rsprompter.models_sam2 as models_sam2
-from rsprompter.shape_prior import ShapePointMiner, ShapePriorInjector
+from models.models import RSPrompterAnchor
+import models.models_sam2 as models_sam2
+from models.shape_prior import ShapePointMiner, ShapePriorInjector
 from inference.infer_from_checkpoint import (
     _restore_embedded_architecture_environment,
 )

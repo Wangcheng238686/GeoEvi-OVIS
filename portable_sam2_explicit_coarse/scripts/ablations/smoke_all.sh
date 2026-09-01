@@ -22,12 +22,12 @@ MATRIX=(
 )
 
 echo "[1/5] dense prompt geometry and detach unit tests"
-"${PYTHON}" "${SCRIPT_DIR}/test_dense_prompt_utils.py"
+"${PYTHON}" "${PROJECT_ROOT}/tests/test_dense_prompt_utils.py"
 
 echo "[2/5] CPU/Gloo delayed rank-0 control-plane check"
 "${PYTHON}" -m torch.distributed.run \
   --standalone --nproc_per_node=2 \
-  "${SCRIPT_DIR}/smoke_ddp_control_plane.py"
+  "${PROJECT_ROOT}/tests/smoke_ddp_control_plane.py"
 
 echo "[3/5] config and command penetration checks"
 for script in "${MATRIX[@]}"; do

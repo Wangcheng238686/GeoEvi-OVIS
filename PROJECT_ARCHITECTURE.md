@@ -197,6 +197,8 @@ final-mask 坐标契约，M0→C1、M1→C2 才是在相同 full-image 契约下
 | `environment.yml` | 可移植 conda 环境配置；版本对齐旧 `cvt2` 训练环境。本机 Windows 用 torch 2.1.0+cpu + mmcv 2.1.0 预编译 wheel；Linux 服务器按文件头注释换 torch 2.8 + CUDA 并 `mim install mmcv==2.1.0`。 |
 | `sam2/` | 固定的 SAM2 Python 包及 Hydra 配置；除明确升级 SAM2 外不要修改。 |
 | `portable_sam2_explicit_coarse/` | 新主线源码、配置、训练和消融入口。 |
+| `tests/` | 组件 smoke、dense prompt 单测与 DDP 控制面 smoke。 |
+| `tools/` | `visualize_instances.py` 与一次性分析探针（`tools/analysis/`）。 |
 
 ## 4. 新主线逐文件说明
 
@@ -220,7 +222,7 @@ rsprompter_anchor_satS_v11_sam2_large_full.py
         └── whu1024_baseplus_explicit_coarse_densefix.py
 ```
 
-### 4.2 模型：`portable_sam2_explicit_coarse/rsprompter/`
+### 4.2 模型：`portable_sam2_explicit_coarse/models/`
 
 | 文件 | 用途 |
 |---|---|
@@ -787,7 +789,18 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 
 ## 8. 文档同步记录
 
-- 2026-09-01：C 级追加项——拆分 `rsprompter/models_sam2.py`（2442 行）。
+- 2026-09-01：主线目录重组（三项）。① `rsprompter/` 包更名为 `models/`
+  （去掉旧项目方法名遗产；全部绝对导入、trainer/推理/契约校验/探针脚本
+  同步更新，`RSPROMPTER_LIGHT_IMPORT` 环境变量与历史配置文件名
+  `rsprompter_anchor_*.py` 保持不变）；② `inference/` 只保留正式入口
+  （`infer_from_checkpoint.py`、`visualize_p2_refiner.py`），一次性分析
+  探针移至 `tools/analysis/`；③ 测试归拢到 `tests/`
+  （组件 smoke、dense prompt 单测、DDP 控制面 smoke），可视化工具移至
+  `tools/visualize_instances.py`（trainer 子进程调用路径同步）。验证：
+  全库 `py_compile`、三个测试套件在新位置通过、7 架构等价探针
+  7/7 逐位一致。
+
+- 2026-09-01：C 级追加项——拆分 `models/models_sam2.py`（2442 行）。
   新模块：`vision_encoder.py`（468 行，位置编码 + Hiera/LoRA 编码器）、
   `necks.py`（335 行，aggregator/PAFPN）、`mask_decoder.py`（233 行，
   MaskDecoder 包装）、`mask_head.py`（1185 行，MaskHead `__init__`/forward
@@ -868,7 +881,7 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
   同步收缩。旧 stride-32 checkpoint 不再支持 RESUME/同架构 INIT（除非
   显式 `--allow-cross-arch-init`），checkpoint 推理入口保留兼容读取。
 
-- 2026-09-01：A 级孤儿代码清理（无行为变化）。删除 `rsprompter/models.py` 中
+- 2026-09-01：A 级孤儿代码清理（无行为变化）。删除 `models/models.py` 中
   无任何 config 引用的 SAM1 遗留链（`RSPrompterAnchorMaskHead`、`RSSam*` 四件套、
   `RSFPN`/`RSFeatureAggregator`/`RSSimpleFPN`、`AP75DualLossShared2FCBBoxHead`、
   `LN2d`）与已被 `CoarseMaskLoss` 取代的 `_shape_prior_aux_loss`/`_shape_prior_targets`

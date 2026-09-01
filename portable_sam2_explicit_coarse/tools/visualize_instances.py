@@ -18,25 +18,25 @@ UE-COCO, ...). Coordinates are handled per source:
 
 Examples:
     # GT overlay (iSAID val patches)
-    python scripts/visualize_instances.py gt \
+    python tools/visualize_instances.py gt \
         --ann-json /data1/wangcheng/dataset/iSAID/isaid_patches_800/val/instances_isaid_val.json \
         --images-dir /data1/wangcheng/dataset/iSAID/isaid_patches_800/val/images \
         --out-dir logs/viz/isaid_gt --limit 8
 
     # GT overlay (WHU validation)
-    python scripts/visualize_instances.py gt \
+    python tools/visualize_instances.py gt \
         --ann-json "/data1/wangcheng/dataset/WHU/2.4 annotation/annotation/validation.json" \
         --images-dir "/data1/wangcheng/dataset/WHU/2.3 valid/validation" \
         --out-dir logs/viz/whu_gt --limit 8
 
     # Prediction overlay (optionally with GT outlines behind)
-    python scripts/visualize_instances.py pred \
+    python tools/visualize_instances.py pred \
         --pred-json runs/inference_val/predictions.json \
         --out-dir logs/viz/isaid_pred --score-thr 0.3 --limit 20 \
         --gt-ann-json .../instances_isaid_val.json
 
     # Merge tiled patch predictions back onto original images
-    python scripts/visualize_instances.py merge \
+    python tools/visualize_instances.py merge \
         --pred-json runs/inference_val/predictions.json \
         --orig-images-dir /data1/wangcheng/dataset/iSAID/val/images \
         --out-dir logs/viz/isaid_merged --nms-iou 0.5 --limit 4
