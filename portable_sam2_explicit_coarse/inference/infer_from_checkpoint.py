@@ -76,6 +76,30 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Allow missing/unexpected model keys. Strict loading is the default.",
     )
+    parser.add_argument(
+        "--disable-p2",
+        action="store_true",
+        help=(
+            "Ablate P2BoundaryRefiner at inference by zeroing beta (delta==0, "
+            "refined coarse logits identical to raw)."
+        ),
+    )
+    parser.add_argument(
+        "--p2-beta",
+        type=float,
+        default=None,
+        help=(
+            "Override P2BoundaryRefiner beta at inference (e.g. 1.0 amplifies "
+            "the residual 5x vs the trained 0.2; negative flips its sign). "
+            "Takes precedence over --disable-p2."
+        ),
+    )
+    parser.add_argument(
+        "--max-per-img",
+        type=int,
+        default=None,
+        help="Override test_cfg max_per_img (e.g. 150 for the dense-image cap study).",
+    )
     return parser.parse_args()
 
 
@@ -151,6 +175,36 @@ def _restore_architecture_environment(snapshot: Mapping[str, Any]) -> None:
             os.environ[env_key] = str(value)
 
 
+def _restore_embedded_architecture_environment(
+    model_config: Mapping[str, Any],
+) -> None:
+    """Restore config-factory switches omitted by early schema-v2 snapshots."""
+    stride = model_config.get("sam_image_embedding_stride")
+    if stride not in (None, ""):
+        os.environ["SAM_IMAGE_EMBED_STRIDE"] = str(stride)
+
+    roi_head = model_config.get("roi_head", {})
+    head = roi_head.get("mask_head", {}) if isinstance(roi_head, Mapping) else {}
+    if not isinstance(head, Mapping):
+        return
+    final_mode = head.get("final_mask_coordinate_mode")
+    if final_mode not in (None, ""):
+        os.environ["FINAL_MASK_COORDINATE_MODE"] = str(final_mode)
+    p2_cfg = head.get("p2_boundary_refiner_cfg", {})
+    if isinstance(p2_cfg, Mapping) and p2_cfg.get("enabled") is not None:
+        os.environ["P2_BOUNDARY_REFINER_ENABLED"] = (
+            "1" if bool(p2_cfg["enabled"]) else "0"
+        )
+    dense_cfg = head.get("dense_prompt_cfg", {})
+    if isinstance(dense_cfg, Mapping):
+        transform = dense_cfg.get("transform")
+        if transform not in (None, ""):
+            os.environ["SHAPE_DENSE_TRANSFORM"] = str(transform)
+        detach = dense_cfg.get("detach_input")
+        if detach is not None:
+            os.environ["SHAPE_DENSE_DETACH"] = "1" if bool(detach) else "0"
+
+
 def _resolve_sam2_repo(args: argparse.Namespace, snapshot: Mapping[str, Any]) -> Path:
     runtime = snapshot.get("runtime_config", {})
     saved = runtime.get("sam2_repo") if isinstance(runtime, Mapping) else None
@@ -201,6 +255,7 @@ def _resolve_model_config(
     if isinstance(saved, Mapping) and saved:
         model_config = copy.deepcopy(dict(saved))
         source = "checkpoint.config_snapshot.model_config"
+        _restore_embedded_architecture_environment(model_config)
     else:
         fallback = args.config or snapshot.get("config_path")
         if not fallback:
@@ -231,6 +286,7 @@ def _resolve_model_config(
 
     saved_contract = snapshot.get("architecture_contract", {})
     if saved_contract:
+        from mmengine.config import Config
         from rsprompter.architecture_contract import architecture_contract
 
         resolved_contract = architecture_contract(model_config)
@@ -240,10 +296,41 @@ def _resolve_model_config(
             or saved_contract.get("model_fingerprint")
             != resolved_contract.get("model_fingerprint")
         ):
-            raise RuntimeError(
-                "Embedded model_config does not match its saved architecture "
-                f"contract: saved={dict(saved_contract)} resolved={resolved_contract}"
+            # Older schema-v2 training runs calculated the contract before
+            # MODELS.build(), but captured cfg.model afterwards. MMEngine
+            # registries may consume nested config fields in place, so that
+            # embedded post-build copy cannot reproduce the pre-build
+            # fingerprint. Recover only from the recorded source config and
+            # only when it exactly reproduces the saved contract.
+            recorded = args.config or snapshot.get("config_path")
+            recorded_path = Path(str(recorded)).expanduser() if recorded else None
+            if recorded_path is not None and not recorded_path.is_absolute():
+                recorded_path = MAINLINE_ROOT / recorded_path
+            if recorded_path is not None and recorded_path.is_file():
+                candidate = Config.fromfile(str(recorded_path)).model.to_dict()
+                candidate_contract = architecture_contract(candidate)
+            else:
+                candidate = None
+                candidate_contract = {}
+            if candidate is None or (
+                saved_contract.get("architecture_id")
+                != candidate_contract.get("architecture_id")
+                or saved_contract.get("model_fingerprint")
+                != candidate_contract.get("model_fingerprint")
+            ):
+                raise RuntimeError(
+                    "Embedded model_config does not match its saved architecture "
+                    f"contract: saved={dict(saved_contract)} "
+                    f"resolved={resolved_contract} "
+                    f"recorded_config={candidate_contract}"
+                )
+            logger.warning(
+                "Embedded post-build model_config changed fingerprint; using "
+                "contract-matching recorded config %s",
+                recorded_path,
             )
+            model_config = candidate
+            source = str(recorded_path)
 
     runtime = snapshot.get("runtime_config", {})
     saved_sam2_ckpt = (
@@ -388,12 +475,18 @@ def _build_loader(contract: Mapping[str, Any], num_workers: int) -> DataLoader:
     from data.loader import rtmdet_collate_fn
     from data.whu_instance_dataset import WHUCocoInstanceDataset
 
+    single_class = bool(contract["single_class"])
+    # Multi-class runs (iSAID) train with canonical ids 1..15 -> labels 0..14;
+    # the loader must apply the same mapping so GT labels match the head.
+    category_mapping = None if single_class else {i: i - 1 for i in range(1, 16)}
     dataset = WHUCocoInstanceDataset(
         data_root=contract["data_root"],
         ann_file=contract["ann_file"],
         image_subdir=contract["image_subdir"],
         image_size=tuple(contract["image_size"]),
-        single_class=bool(contract["single_class"]),
+        single_class=single_class,
+        enable_category_mapping=not single_class,
+        category_mapping=category_mapping,
         flip_prob=0.0,
         vflip_prob=0.0,
         gaussian_noise_prob=0.0,
@@ -615,6 +708,25 @@ def main() -> None:
         no_mask_validator(f"checkpoint inference ({args.weights})")
     model.to(device)
     model.eval()
+    if args.max_per_img:
+        for cfg_holder in (getattr(model.roi_head, "test_cfg", None),):
+            if cfg_holder is not None and "max_per_img" in cfg_holder:
+                cfg_holder["max_per_img"] = int(args.max_per_img)
+        logger.info("test_cfg max_per_img overridden to %d", int(args.max_per_img))
+    if args.disable_p2 or args.p2_beta is not None:
+        refiner = getattr(mask_head, "p2_boundary_refiner", None)
+        if refiner is None:
+            logger.warning(
+                "--disable-p2/--p2-beta given but this checkpoint has no P2BoundaryRefiner"
+            )
+        else:
+            target_beta = 0.0 if args.p2_beta is None else float(args.p2_beta)
+            logger.info(
+                "P2BoundaryRefiner beta overridden at inference: %.4f -> %.4f",
+                float(refiner.beta),
+                target_beta,
+            )
+            refiner.beta = target_beta
     logger.info(
         "Model rebuilt from %s; weights=%s strict=%s device=%s",
         config_source,
@@ -721,6 +833,8 @@ def main() -> None:
         "sam2_repo": str(sam2_repo),
         "weights": args.weights,
         "strict": not args.allow_nonstrict,
+        "disable_p2": bool(args.disable_p2),
+        "p2_beta_override": args.p2_beta,
         "load_report": load_report,
         "dataset": contract,
         "device": str(device),

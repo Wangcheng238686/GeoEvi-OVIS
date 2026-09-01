@@ -88,7 +88,7 @@ case "${PROMPT_ROUTE}" in
     fi
     : "${EXPLICIT_PROMPT_MODE:?coarse wrapper must set EXPLICIT_PROMPT_MODE}"
     case "${EXPLICIT_PROMPT_MODE}" in
-      points|points_box|points_box_dense) ;;
+      points|box|mask|points_box|points_box_dense) ;;
       *) echo "invalid EXPLICIT_PROMPT_MODE=${EXPLICIT_PROMPT_MODE}" >&2; exit 2 ;;
     esac
     EXPECTED_EXPLICIT_MODE="${EXPLICIT_PROMPT_MODE}"
@@ -103,7 +103,7 @@ case "${PROMPT_ROUTE}" in
       fi
       FINAL_MASK_COORDINATE_MODE="roi_local"
     else
-      FINAL_MASK_COORDINATE_MODE="full_image"
+      FINAL_MASK_COORDINATE_MODE="${FINAL_MASK_COORDINATE_MODE:-roi_local}"
     fi
     DEFAULT_PROMPT_DEBUG_STATS=1
     ;;
@@ -198,7 +198,7 @@ if ((TORCH_DDP_CONTROL_TIMEOUT_SECONDS < 1)); then
 fi
 export TORCH_DDP_CONTROL_TIMEOUT_SECONDS
 LEARNING_RATE="${LEARNING_RATE:-5e-4}"
-TRAIN_SUBSET_RATIO="${TRAIN_SUBSET_RATIO:-0.2}"
+TRAIN_SUBSET_RATIO="${TRAIN_SUBSET_RATIO:-1.0}"
 VAL_SUBSET_RATIO="${VAL_SUBSET_RATIO:-1.0}"
 SUBSET_SEED="${SUBSET_SEED:-44}"
 EMA_ENABLED="${EMA_ENABLED:-0}"
@@ -223,7 +223,10 @@ if [[ "${COMPUTE_VAL_LOSS}" != "0" && "${COMPUTE_VAL_LOSS}" != "1" ]]; then
   echo "COMPUTE_VAL_LOSS must be 0 or 1, got ${COMPUTE_VAL_LOSS}" >&2
   exit 2
 fi
-SAVE_BBOX_BEST_METRIC="${SAVE_BBOX_BEST_METRIC:-bbox/mAP}"
+# `${VAR-...}` without the colon: an explicitly exported empty string means
+# "disable the bbox-best checkpoint" (best-only retention wrappers); only a
+# completely unset variable falls back to the default metric.
+SAVE_BBOX_BEST_METRIC="${SAVE_BBOX_BEST_METRIC-bbox/mAP}"
 SEGM_SCORE_MODE="${SEGM_SCORE_MODE:-detector}"
 case "${SEGM_SCORE_MODE}" in
   detector|mask_quality) ;;
@@ -440,6 +443,18 @@ fi
 CMD+=("${TRAINER_EXTRA_ARGS[@]}")
 
 GIT_COMMIT="$(git -C "${PROJECT_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
+# HEAD alone cannot identify the executed code when the working tree is dirty
+# (the resumed paper run executed 5fff72f + uncommitted edits). Record the
+# dirty flag, the modified/untracked code files, and a diff fingerprint so a
+# log line uniquely pins the exact tree state.
+GIT_STATUS_SHORT="$(git -C "${PROJECT_ROOT}" status --porcelain 2>/dev/null || true)"
+GIT_DIRTY="$( [[ -n "${GIT_STATUS_SHORT}" ]] && echo 1 || echo 0 )"
+# The grep must not fail under `set -o pipefail` when the tree is clean
+# (empty status -> no matches -> grep exit 1 -> silent errexit killed the
+# runner right after contract validation on the first clean-tree launch).
+GIT_DIRTY_FILES="$(echo "${GIT_STATUS_SHORT}" | awk '{print $2}' | grep -E '\.(py|sh|md)$' | paste -sd, - | cut -c1-400 || true)"
+GIT_DIFF_SHA="$(git -C "${PROJECT_ROOT}" diff HEAD 2>/dev/null | sha256sum | cut -c1-16)"
+[[ -z "${GIT_DIFF_SHA}" ]] && GIT_DIFF_SHA=none
 EFFECTIVE_GLOBAL_BATCH_SIZE=$((BATCH_SIZE * GRAD_ACCUM_STEPS * NPROC_PER_NODE))
 
 echo "============================================================"
@@ -447,6 +462,9 @@ echo "resolved_hyperparameters_begin"
 echo "timestamp=${RUN_TIMESTAMP}"
 echo "environment_config=${PORTABLE_SAM2_ENV_FILE}"
 echo "git_commit=${GIT_COMMIT}"
+echo "git_dirty=${GIT_DIRTY}"
+echo "git_dirty_code_files=${GIT_DIRTY_FILES:-none}"
+echo "git_diff_sha16=${GIT_DIFF_SHA}"
 echo "ablation_id=${ABLATION_ID}"
 echo "expected_architecture_id=${EXPECTED_ARCHITECTURE_ID}"
 echo "run_tag=${RUN_TAG}"

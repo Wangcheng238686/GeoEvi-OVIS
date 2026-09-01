@@ -5,10 +5,10 @@ import os
 _base_ = ["./whu1024_baseplus_clean.py"]
 
 _mode = os.environ.get("EXPLICIT_PROMPT_MODE", "points_box_dense").strip().lower()
-if _mode not in {"points", "points_box", "points_box_dense"}:
+if _mode not in {"points", "box", "mask", "points_box", "points_box_dense"}:
     raise ValueError(f"Unsupported EXPLICIT_PROMPT_MODE={_mode!r}")
 
-_use_dense = _mode == "points_box_dense"
+_use_dense = _mode in {"mask", "points_box_dense"}
 _p2_boundary_refiner = (
     os.environ.get("P2_BOUNDARY_REFINER_ENABLED", "0") == "1"
 )
@@ -150,7 +150,11 @@ model = dict(
             freeze_no_mask_embed=True,
             load_no_mask_pretrained=True,
             final_mask_coordinate_mode=(
-                "roi_local" if _roi_sam_enabled else "full_image"
+                "roi_local"
+                if _roi_sam_enabled
+                else os.environ.get(
+                    "FINAL_MASK_COORDINATE_MODE", "roi_local"
+                ).strip().lower()
             ),
             **_final_mask_loss_override,
             **_roi_sam_override,

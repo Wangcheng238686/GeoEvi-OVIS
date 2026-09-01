@@ -177,14 +177,42 @@ def build_coco_gt_and_dt(
     return coco_gt, coco_dt
 
 
-def run_coco_eval(coco_gt, coco_dt, iou_type: str = "bbox") -> OrderedDict:
+def run_coco_eval(coco_gt, coco_dt, iou_type: str = "bbox", max_dets=None) -> OrderedDict:
     """Run COCOeval and return metrics dict."""
     from pycocotools.cocoeval import COCOeval
 
     coco_eval = COCOeval(coco_gt, coco_dt, iouType=iou_type)
+    if max_dets is not None:
+        coco_eval.params.maxDets = max_dets
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize()
+    if max_dets is not None:
+        # summarize() hardcodes maxDets=100 for the primary AP stat and
+        # yields -1 when 100 is absent from params.maxDets. Recompute the
+        # IoU-averaged AP from the accumulated precision array at the
+        # custom cap (no reliance on private summarize helpers).
+        try:
+            _mind = list(coco_eval.params.maxDets).index(list(max_dets)[-1])
+            _prec = coco_eval.eval["precision"]
+            _aps = []
+            for _k in range(_prec.shape[2]):
+                _p = _prec[:, :, _k, 0, _mind]
+                _v = _p[_p > -1]
+                if _v.size:
+                    _aps.append(float(_v.mean()))
+            if _aps:
+                coco_eval.stats[0] = sum(_aps) / len(_aps)
+        except Exception:
+            # A silent -1 here would poison best-model selection for the whole
+            # run (constant metric -> best never updates); surface it loudly.
+            logger.warning(
+                "run_coco_eval custom-maxDets recompute failed for "
+                "iou_type=%s max_dets=%s; mAP may read -1",
+                iou_type,
+                list(max_dets),
+                exc_info=True,
+            )
 
     metric_names = [
         "mAP", "mAP_50", "mAP_75", "mAP_s", "mAP_m", "mAP_l",
@@ -369,6 +397,59 @@ def _summarize_mask_density(all_dt: List[dict]) -> Tuple[float, float]:
         weighted_fill / max(total_masks, 1),
         total_masks / max(len(all_dt), 1),
     )
+
+
+def _capture_git_state() -> Dict[str, str]:
+    """Fingerprint the executed code: HEAD, dirty flag, tracked-diff sha.
+
+    Complements the runner's resolved_hyperparameters git_* lines so both the
+    training log and every checkpoint pin the exact working-tree state, not
+    just the commit (a dirty tree silently diverging from HEAD is what made
+    the resumed paper run hard to trace).
+    """
+    import subprocess
+
+    def _git(*argv: str) -> str:
+        try:
+            return subprocess.run(
+                ["git", *argv],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+        except Exception:
+            return ""
+
+    head = _git("rev-parse", "HEAD") or "unknown"
+    status = _git("status", "--porcelain")
+    dirty = "1" if status else "0"
+    code_files = ",".join(
+        line.split(maxsplit=1)[1].strip()
+        for line in status.splitlines()
+        if line.split(maxsplit=1)[-1].strip().endswith((".py", ".sh", ".md"))
+    )[:400]
+    try:
+        diff_sha = subprocess.run(
+            ["git", "diff", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        import hashlib
+
+        diff_sha16 = (
+            hashlib.sha256(diff_sha.stdout.encode("utf-8")).hexdigest()[:16]
+            if diff_sha.stdout
+            else "none"
+        )
+    except Exception:
+        diff_sha16 = "unknown"
+    return {
+        "git_commit": head,
+        "git_dirty": dirty,
+        "git_dirty_code_files": code_files or "none",
+        "git_diff_sha16": diff_sha16,
+    }
 
 
 def _resolve_ddp_timeout_seconds() -> int:
@@ -692,9 +773,18 @@ class ExponentialMovingAverage:
         if not (0.0 < decay < 1.0):
             raise ValueError(f"EMA decay must be in (0,1), got {decay}")
         self.decay = float(decay)
-        state = _get_model_core(model).state_dict()
+        model_core = _get_model_core(model)
+        state = model_core.state_dict()
         self.ema_state = {k: v.detach().clone() for k, v in state.items()}
         self.backup_state = None
+        # Frozen tensors (params with requires_grad=False, plus buffers) must
+        # be copied verbatim, never averaged: averaging a constant across tens
+        # of thousands of steps accumulates fp32 rounding drift (~1e-6 per
+        # the fast-150 run), which trips strict pretrained-value contract
+        # checks (no_mask_embed) when the EMA state is loaded for inference.
+        _frozen = {n for n, p in model_core.named_parameters() if not p.requires_grad}
+        _frozen.update(n for n, _ in model_core.named_buffers())
+        self._frozen_keys = frozenset(k for k in state if k in _frozen)
 
     @torch.no_grad()
     def update(self, model: torch.nn.Module):
@@ -705,7 +795,10 @@ class ExponentialMovingAverage:
                 self.ema_state[key] = value_detached.clone()
                 continue
             ema_value = self.ema_state[key]
-            if torch.is_floating_point(value_detached):
+            if (
+                torch.is_floating_point(value_detached)
+                and key not in self._frozen_keys
+            ):
                 ema_value.mul_(self.decay).add_(value_detached, alpha=1.0 - self.decay)
             else:
                 ema_value.copy_(value_detached)
@@ -1302,6 +1395,15 @@ def main():
     parser.add_argument("--resume-from", type=str, default=None)
     parser.add_argument("--init-from", type=str, default=None)
     parser.add_argument(
+        "--test-only",
+        action="store_true",
+        default=False,
+        help="Load weights via --resume-from and run COCO evaluation once on the "
+        "WHU test split (2.2 test/test + test.json), then exit. No training. "
+        "Requires --resume-from pointing at a checkpoint with a matching "
+        "architecture contract.",
+    )
+    parser.add_argument(
         "--allow-cross-arch-init",
         action="store_true",
         help="Explicitly allow INIT_FROM from a different or legacy architecture.",
@@ -1476,10 +1578,17 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    # CUDNN_BENCHMARK=1 trades bit-level reproducibility for conv autotuning
+    # on fixed-size inputs (public runners keep the deterministic default).
+    cudnn_benchmark = os.environ.get("CUDNN_BENCHMARK", "0") == "1"
+    torch.backends.cudnn.deterministic = not cudnn_benchmark
+    torch.backends.cudnn.benchmark = cudnn_benchmark
     if int(os.environ.get("RANK", "0")) == 0:
-        print(f"[seed] Random seed fixed to {args.seed} | cudnn.deterministic=True")
+        print(
+            f"[seed] Random seed fixed to {args.seed} "
+            f"| cudnn.deterministic={not cudnn_benchmark} "
+            f"| cudnn.benchmark={cudnn_benchmark}"
+        )
 
     dist_info = _init_distributed()
     distributed = bool(dist_info.get("distributed", 0))
@@ -1626,17 +1735,56 @@ def main():
         if not 0.0 < value <= 1.0:
             raise ValueError(f"{name} must be in (0, 1], got {value}")
 
+    # --- train-time augmentation knobs (env-driven; defaults preserve the
+    # historical hflip-only protocol, individual wrappers opt in) ---
+    train_flip_prob = float(os.environ.get("TRAIN_FLIP_PROB", "0.5"))
+    train_vflip_prob = float(os.environ.get("TRAIN_VFLIP_PROB", "0.0"))
+    train_ms_resize_prob = float(
+        os.environ.get("TRAIN_MULTI_SCALE_RESIZE_PROB", "0.0")
+    )
+    train_ms_mode = os.environ.get("TRAIN_MULTI_SCALE_MODE", "value")
+    train_ms_img_scale_spec = os.environ.get(
+        "TRAIN_MULTI_SCALE_IMG_SCALE",
+        "896:896,960:960,1024:1024,1088:1088,1152:1152",
+    )
+    train_ms_img_scale = None
+    if train_ms_img_scale_spec.strip():
+        train_ms_img_scale = []
+        for part in train_ms_img_scale_spec.split(","):
+            w_text, h_text = part.strip().split(":", 1)
+            train_ms_img_scale.append((int(w_text), int(h_text)))
+    for name, value in (
+        ("TRAIN_FLIP_PROB", train_flip_prob),
+        ("TRAIN_VFLIP_PROB", train_vflip_prob),
+        ("TRAIN_MULTI_SCALE_RESIZE_PROB", train_ms_resize_prob),
+    ):
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{name} must be in [0,1], got {value}")
+    if train_ms_mode not in ("value", "range"):
+        raise ValueError(
+            f"TRAIN_MULTI_SCALE_MODE must be value or range, got {train_ms_mode}"
+        )
+
     train_loader, val_loader, train_dataset = (
         create_train_loader(
             data_root=args.data_root,
             batch_size=args.batch_size,
-            flip_prob=0.5,
-            vflip_prob=0.0,
+            flip_prob=train_flip_prob,
+            vflip_prob=train_vflip_prob,
             gaussian_noise_prob=0.0,
             gaussian_noise_std=0.02,
             random_erasing_prob=0.0,
             random_erasing_scale=(0.02, 0.15),
             random_erasing_ratio=(0.3, 3.3),
+            # Multi-scale jitter resizes BEFORE the fixed resize back to
+            # image_size: the network (and frozen SAM2) always receives its
+            # native 1024x1024 input; only object scale varies. Kept off by
+            # default — random_erasing stays disabled because it erases image
+            # pixels without updating GT masks (label corruption for
+            # instance segmentation).
+            multi_scale_resize_prob=train_ms_resize_prob,
+            multi_scale_mode=train_ms_mode,
+            multi_scale_img_scale=train_ms_img_scale,
             image_size=tuple(args.image_size),
             distributed=distributed,
             rank=rank,
@@ -1644,10 +1792,18 @@ def main():
             val_ratio=args.val_ratio,
             val_batch_size=args.val_batch_size,
             dataset_format="whu_coco" if args.use_whu_coco else "labelme",
-            whu_train_ann_file="2.4 annotation/annotation/train.json",
-            whu_val_ann_file="2.4 annotation/annotation/validation.json",
-            whu_train_img_subdir="2.1 train/train",
-            whu_val_img_subdir="2.3 valid/validation",
+            whu_train_ann_file=os.environ.get(
+                "WHU_TRAIN_ANN_FILE", "2.4 annotation/annotation/train.json"
+            ),
+            whu_val_ann_file=os.environ.get(
+                "WHU_VAL_ANN_FILE", "2.4 annotation/annotation/validation.json"
+            ),
+            whu_train_img_subdir=os.environ.get(
+                "WHU_TRAIN_IMG_SUBDIR", "2.1 train/train"
+            ),
+            whu_val_img_subdir=os.environ.get(
+                "WHU_VAL_IMG_SUBDIR", "2.3 valid/validation"
+            ),
             train_subset_ratio=train_subset_ratio,
             val_subset_ratio=val_subset_ratio,
             seed=int(args.seed),
@@ -1773,6 +1929,18 @@ def main():
         "architecture_contract": dict(resolved_architecture),
         "config_path": str(args.config),
         "training_args": dict(vars(args)),
+        "train_augmentation": {
+            "flip_prob": train_flip_prob,
+            "vflip_prob": train_vflip_prob,
+            "multi_scale_resize_prob": train_ms_resize_prob,
+            "multi_scale_mode": train_ms_mode,
+            "multi_scale_img_scale": train_ms_img_scale,
+        },
+        # HEAD alone cannot identify the executed code when the working tree
+        # is dirty; carry the dirty flag + diff fingerprint so a checkpoint
+        # uniquely pins its code state (same fields as the runner's
+        # resolved_hyperparameters git_* lines).
+        "git_state": _capture_git_state(),
         "data_config": {
             "dataset_format": "whu_coco" if args.use_whu_coco else "labelme",
             "data_root": str(args.data_root),
@@ -2018,6 +2186,310 @@ def main():
                 best_bbox_score,
                 best_composite_score,
             )
+
+    # ===== --test-only: evaluate on the held-out WHU test split, then exit =====
+    if args.test_only:
+        if not args.resume_from:
+            raise SystemExit("--test-only requires --resume-from to load weights.")
+        from data import create_test_loader
+
+        test_loader = create_test_loader(
+            data_root=args.data_root,
+            ann_file="2.4 annotation/annotation/test.json",
+            image_subdir="2.2 test/test",
+            image_size=tuple(args.image_size),
+            batch_size=int(args.val_batch_size),
+            num_workers=4,
+            seed=int(args.seed),
+        )
+        # Non-main ranks skip iteration to match the rank0_only validation
+        # contract (no NCCL collective held open during COCO eval).
+        if distributed and not is_main:
+            test_loader = None
+
+        model.eval()
+        if args.freeze_bn:
+            _set_norm_eval(model)
+
+        all_gt: List[dict] = []
+        all_dt: List[dict] = []
+        all_img_metas: List[dict] = []
+
+        if test_loader is not None:
+            if is_main:
+                logger.info(
+                    "Test-only evaluation: checkpoint=%s, test split=%d images",
+                    args.resume_from,
+                    len(test_loader.dataset),
+                )
+            model_for_eval = model.module if hasattr(model, "module") else model
+            # Runtime-only max_per_img override for dense scenes (>100
+            # instances per tile). Mutates the live test_cfg objects, so the
+            # config file and the architecture fingerprint stay untouched.
+            _test_max_per_img = int(os.environ.get("TEST_MAX_PER_IMG", "0") or 0)
+            if _test_max_per_img > 0:
+                _model_test_cfg = getattr(model_for_eval, "test_cfg", None)
+                if _model_test_cfg is not None and "rcnn" in _model_test_cfg:
+                    _model_test_cfg["rcnn"]["max_per_img"] = _test_max_per_img
+                _roi_test_cfg = getattr(
+                    getattr(model_for_eval, "roi_head", None), "test_cfg", None
+                )
+                if _roi_test_cfg is not None and "max_per_img" in _roi_test_cfg:
+                    _roi_test_cfg["max_per_img"] = _test_max_per_img
+                if is_main:
+                    logger.info(
+                        "TEST_MAX_PER_IMG=%d override applied (model-side cap)",
+                        _test_max_per_img,
+                    )
+            _test_eval_max_dets = (
+                [1, 10, _test_max_per_img] if _test_max_per_img > 0 else None
+            )
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(test_loader):
+                    if args.max_val_batches > 0 and batch_idx >= args.max_val_batches:
+                        break
+                    imgs = batch["imgs"].to(device)
+                    img_metas = batch["img_metas"]
+                    gt_bboxes = [b.to(device) for b in batch["gt_bboxes"]]
+                    gt_labels = [l.to(device) for l in batch["gt_labels"]]
+                    gt_masks = batch["gt_masks"]
+
+                    data_samples = []
+                    for i in range(len(imgs)):
+                        ds = DetDataSample()
+                        ds.set_metainfo(img_metas[i])
+                        gt_instances = InstanceData()
+                        num_inst = len(gt_labels[i])
+                        if num_inst > 0:
+                            valid_mask = gt_labels[i] >= 0
+                            num_valid = int(valid_mask.sum().item())
+                            if num_valid > 0:
+                                valid_indices = (
+                                    valid_mask.nonzero().squeeze(-1)[:num_valid].cpu()
+                                )
+                                gt_instances.bboxes = gt_bboxes[i][valid_indices]
+                                gt_instances.labels = gt_labels[i][valid_indices]
+                                masks = gt_masks[i][valid_indices.cpu().numpy()]
+                                gt_instances.masks = BitmapMasks(
+                                    masks, *img_metas[i]["img_shape"]
+                                )
+                            else:
+                                gt_instances.bboxes = torch.zeros(
+                                    (0, 4), dtype=torch.float32, device=device
+                                )
+                                gt_instances.labels = torch.zeros(
+                                    (0,), dtype=torch.int64, device=device
+                                )
+                                gt_instances.masks = BitmapMasks(
+                                    np.zeros(
+                                        (0, *img_metas[i]["img_shape"]), dtype=np.uint8
+                                    ),
+                                    *img_metas[i]["img_shape"],
+                                )
+                        else:
+                            gt_instances.bboxes = torch.zeros(
+                                (0, 4), dtype=torch.float32, device=device
+                            )
+                            gt_instances.labels = torch.zeros(
+                                (0,), dtype=torch.int64, device=device
+                            )
+                            gt_instances.masks = BitmapMasks(
+                                np.zeros(
+                                    (0, *img_metas[i]["img_shape"]), dtype=np.uint8
+                                ),
+                                *img_metas[i]["img_shape"],
+                            )
+                        ds.gt_instances = gt_instances
+                        data_samples.append(ds.to(device))
+
+                    # Mirror the validation loop: run the model's
+                    # data_preprocessor (padding/normalization) before predict.
+                    processed = model_for_eval.data_preprocessor(
+                        {"inputs": imgs, "data_samples": data_samples},
+                        training=False,
+                    )
+                    model_inputs = processed["inputs"]
+                    data_samples = processed["data_samples"]
+
+                    outputs = model_for_eval.predict(
+                        model_inputs, data_samples, rescale=False
+                    )
+                    for j, output in enumerate(outputs):
+                        meta = img_metas[j]
+                        img_shape = meta["img_shape"]
+                        gt_inst = data_samples[j].gt_instances
+                        gt_np = _extract_instances_numpy(
+                            gt_inst, img_shape, encode_masks=True
+                        )
+                        all_gt.append(gt_np)
+                        pred_inst = (
+                            output.pred_instances
+                            if hasattr(output, "pred_instances")
+                            else output
+                        )
+                        pred_np = _extract_instances_numpy(
+                            pred_inst, img_shape, encode_masks=True
+                        )
+                        all_dt.append(pred_np)
+                        all_img_metas.append(meta)
+
+        if is_main:
+            total_gt = sum(len(g["labels"]) for g in all_gt)
+            total_dt = sum(len(d["scores"]) for d in all_dt if "scores" in d)
+            avg_mask_fill, avg_masks_per_image = _summarize_mask_density(all_dt)
+            logger.info(
+                "Test samples: GT=%d, DT=%d, avg_masks_per_image=%.2f, avg_mask_fill=%.4f",
+                total_gt,
+                total_dt,
+                avg_masks_per_image,
+                avg_mask_fill,
+            )
+            if total_gt > 0:
+                coco_gt, coco_bbox_dt = build_coco_gt_and_dt(
+                    all_gt, all_dt, all_img_metas, score_key="scores"
+                )
+                if eval_bbox:
+                    bbox_metrics = run_coco_eval(
+                        coco_gt, coco_bbox_dt, iou_type="bbox",
+                        max_dets=_test_eval_max_dets,
+                    )
+                    logger.info(
+                        "Test bbox/mAP: %.4f bbox/mAP_75: %.4f",
+                        bbox_metrics.get("bbox/mAP", 0.0),
+                        bbox_metrics.get("bbox/mAP_75", 0.0),
+                    )
+                if segm_score_key == "scores":
+                    coco_segm_dt = coco_bbox_dt
+                else:
+                    _, coco_segm_dt = build_coco_gt_and_dt(
+                        all_gt,
+                        all_dt,
+                        all_img_metas,
+                        score_key=segm_score_key,
+                    )
+                segm_metrics = run_coco_eval(
+                    coco_gt, coco_segm_dt, iou_type="segm",
+                    max_dets=_test_eval_max_dets,
+                )
+                logger.info(
+                    "Test segm/mAP: %.4f segm/mAP_50: %.4f segm/mAP_75: %.4f segm/mAP_s: %.4f segm/mAP_m: %.4f",
+                    segm_metrics.get("segm/mAP", 0.0),
+                    segm_metrics.get("segm/mAP_50", 0.0),
+                    segm_metrics.get("segm/mAP_75", 0.0),
+                    segm_metrics.get("segm/mAP_s", 0.0),
+                    segm_metrics.get("segm/mAP_m", 0.0),
+                )
+
+                # Full COCO stat dump: every metric key of both evals, plus a
+                # test_metrics.json next to the checkpoint dir for scripting.
+                _full_test_metrics = {}
+                if eval_bbox:
+                    _full_test_metrics.update(bbox_metrics)
+                _full_test_metrics.update(segm_metrics)
+                for _mk, _mv in _full_test_metrics.items():
+                    logger.info("Test metric %s: %.6f", _mk, float(_mv))
+                try:
+                    import json as _json
+
+                    _metrics_path = checkpoint_dir / "test_metrics.json"
+                    with _metrics_path.open("w", encoding="utf-8") as _mh:
+                        _json.dump(
+                            {
+                                "checkpoint": str(args.resume_from),
+                                "test_eval_max_dets": _test_eval_max_dets,
+                                "metrics": _full_test_metrics,
+                            },
+                            _mh,
+                            indent=2,
+                        )
+                    logger.info("Full test metrics written: %s", _metrics_path)
+                except Exception:
+                    logger.warning("Failed to write test_metrics.json", exc_info=True)
+
+                # Optional prediction visualization (TEST_VIS_OUT=<dir>).
+                # Records reuse the infer_from_checkpoint predictions.json
+                # contract (model-frame RLE + absolute file_name), which
+                # scripts/visualize_instances.py pred mode rescales onto the
+                # stored images automatically.
+                _vis_out = os.environ.get("TEST_VIS_OUT", "").strip()
+                if _vis_out:
+                    _vis_thr = float(os.environ.get("TEST_VIS_SCORE_THR", "0.3"))
+                    _vis_limit = int(os.environ.get("TEST_VIS_LIMIT", "50"))
+                    _vis_records = []
+                    for _dt, _meta in zip(all_dt, all_img_metas):
+                        _fn = str(
+                            _meta.get("img_path") or _meta.get("filename") or ""
+                        )
+                        _rles = _dt.get("rles")
+                        if _rles is None and _dt.get("masks") is not None:
+                            _masks = _dt["masks"]
+                            if hasattr(_masks, "masks"):
+                                _masks = _masks.masks
+                            _rles = _masks_to_rles(_masks)
+                        for _bb, _sc, _rl in zip(
+                            _dt["bboxes"], _dt["scores"], _rles or []
+                        ):
+                            if float(_sc) < _vis_thr:
+                                continue
+                            _counts = _rl["counts"]
+                            if isinstance(_counts, bytes):
+                                _counts = _counts.decode("utf-8")
+                            _vis_records.append(
+                                {
+                                    "file_name": _fn,
+                                    "category_id": 1,
+                                    "bbox": [
+                                        float(_bb[0]),
+                                        float(_bb[1]),
+                                        float(_bb[2] - _bb[0]),
+                                        float(_bb[3] - _bb[1]),
+                                    ],
+                                    "score": float(_sc),
+                                    "segmentation": {
+                                        "size": _rl["size"],
+                                        "counts": _counts,
+                                    },
+                                }
+                            )
+                    _vis_dir = Path(_vis_out).expanduser().resolve()
+                    _vis_dir.mkdir(parents=True, exist_ok=True)
+                    _pred_json = _vis_dir / "predictions.json"
+                    import json as _vis_json
+
+                    with _pred_json.open("w", encoding="utf-8") as _vh:
+                        _vis_json.dump(_vis_records, _vh)
+                    logger.info(
+                        "Test visualization records: %d (score>=%.2f) -> %s",
+                        len(_vis_records),
+                        _vis_thr,
+                        _pred_json,
+                    )
+                    import subprocess
+                    import sys as _sys
+
+                    _project_root = Path(__file__).resolve().parents[1]
+                    _vis_cmd = [
+                        _sys.executable,
+                        "scripts/visualize_instances.py",
+                        "pred",
+                        "--pred-json",
+                        str(_pred_json),
+                        "--out-dir",
+                        str(_vis_dir / "images"),
+                        "--limit",
+                        str(_vis_limit),
+                    ]
+                    logger.info("Visualization: %s", " ".join(_vis_cmd))
+                    subprocess.run(
+                        _vis_cmd, check=False, cwd=str(_project_root)
+                    )
+            else:
+                logger.warning("No valid GT in test split; skipping COCO eval.")
+            logger.info("Test-only evaluation complete. Exiting (no training).")
+        # Ensure all ranks reach the exit together.
+        if dist_info.get("world_size", 1) > 1:
+            dist.barrier()
+        return
 
     nonfinite_batches = 0
     # Validation order is deterministic within a run. Cache compact GT RLE
@@ -2573,6 +3045,32 @@ def main():
                 )
 
             if total_gt > 0:
+                # Honor TEST_MAX_PER_IMG during per-epoch validation so that
+                # best-model selection runs at the same maxDets contract as
+                # the final --test-only report (previously this env only
+                # affected the test-only path, silently leaving best selection
+                # at the COCO default maxDets=100). The model-side cap mirrors
+                # the test-only override: dense tiles would otherwise batch
+                # hundreds of instances through the SAM2 decoder (~10 GB
+                # spike) only for the eval to keep the top 150 anyway. Ranking
+                # is score-based, so metrics are identical either way.
+                _val_max_dets = None
+                _val_md_env = int(os.environ.get("TEST_MAX_PER_IMG", "0") or 0)
+                if _val_md_env > 0:
+                    _val_max_dets = [1, 10, _val_md_env]
+                    _val_model_for_eval = (
+                        model.module if hasattr(model, "module") else model
+                    )
+                    _val_test_cfg = getattr(_val_model_for_eval, "test_cfg", None)
+                    if _val_test_cfg is not None and "rcnn" in _val_test_cfg:
+                        _val_test_cfg["rcnn"]["max_per_img"] = _val_md_env
+                    _val_roi_cfg = getattr(
+                        getattr(_val_model_for_eval, "roi_head", None),
+                        "test_cfg",
+                        None,
+                    )
+                    if _val_roi_cfg is not None and "max_per_img" in _val_roi_cfg:
+                        _val_roi_cfg["max_per_img"] = _val_md_env
                 # The segmentation score contract is stored in cfg.model and
                 # consumed identically by validation and checkpoint inference.
                 # Bbox candidate selection/ranking always remains detector-score based.
@@ -2581,7 +3079,8 @@ def main():
                 )
                 if eval_bbox:
                     bbox_metrics = run_coco_eval(
-                        coco_gt, coco_bbox_dt, iou_type="bbox"
+                        coco_gt, coco_bbox_dt, iou_type="bbox",
+                        max_dets=_val_max_dets,
                     )
                     val_metrics.update(bbox_metrics)
                     logger.info(
@@ -2599,13 +3098,45 @@ def main():
                         score_key=segm_score_key,
                     )
                 segm_metrics = run_coco_eval(
-                    coco_gt, coco_segm_dt, iou_type="segm"
+                    coco_gt, coco_segm_dt, iou_type="segm",
+                    max_dets=_val_max_dets,
                 )
                 val_metrics.update(segm_metrics)
                 logger.info(
                     "Validation segm/mAP: %.4f",
                     segm_metrics.get("segm/mAP", 0.0),
                 )
+
+                # Optional compatibility metric at a second maxDets setting.
+                # Used by accelerated runs whose primary eval runs at a
+                # non-default maxDets (TEST_MAX_PER_IMG) but that still need a
+                # curve directly comparable with historical maxDets=100 logs.
+                # Stored under suffixed keys so best-model/early-stop lookups
+                # on the plain "segm/mAP" key are unaffected.
+                compat_max_dets = int(os.environ.get("VAL_COMPAT_MAX_DETS", "0") or 0)
+                if compat_max_dets > 0:
+                    for _iou_type, _dt in (
+                        ("bbox", coco_bbox_dt),
+                        ("segm", coco_segm_dt),
+                    ):
+                        _compat = run_coco_eval(
+                            coco_gt,
+                            _dt,
+                            iou_type=_iou_type,
+                            max_dets=[1, 10, compat_max_dets],
+                        )
+                        val_metrics.update(
+                            {
+                                f"{k}@md{compat_max_dets}": v
+                                for k, v in _compat.items()
+                            }
+                        )
+                        logger.info(
+                            "Validation %s/mAP@maxDet%d: %.4f",
+                            _iou_type,
+                            compat_max_dets,
+                            _compat.get(f"{_iou_type}/mAP", 0.0),
+                        )
 
         # Match the baseline's post-validation cleanup and reduce allocator
         # fragmentation across long runs.  Non-main ranks reach this point
