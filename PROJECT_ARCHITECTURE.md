@@ -776,6 +776,16 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 
 ## 8. 文档同步记录
 
+- 2026-09-01：完成清理前后模型等价性验证（本机 CPU、真实 SAM2 Base+ 权重）。
+  以 `729cd46`（精简前）为基准，对全部 7 个存活架构（r0_mlp、r1_c3、r1_c4、
+  r1_c4_rd、r1_c4_rd_roi_local、r1_c4_g、c5v2）对比 architecture_id、
+  state_dict 全部键/形状、可训练参数集合，以及相同权重相同输入下
+  backbone+PAFPN+mask head 前向的全部输出张量（含 coarse raw/refined
+  logits、mask tokens、c5v2 的 P2-BRR refined logits）：除一处外全部逐位
+  一致。该处差异为 B 级清理引入的回归——删除 PE 解冻路径时一并删掉了
+  `mask_downscaling` 的显式冻结，导致其 10 个张量 requires_grad 变为
+  True；已恢复无条件冻结并复测，7/7 全部通过。
+
 - 2026-09-01：新增根目录 `environment.yml`（新项目首个环境配置文件；旧
   `cvt2_env.yml` 是 linux-64 精确导出，随 `legacy_baseline` 删除，仅存于
   Git 历史）。本机已在 `D:\Apps\Anaconda3\envs\sam2` 按该文件建好

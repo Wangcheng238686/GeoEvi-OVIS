@@ -1255,6 +1255,14 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
         # Segmentation COCO ranking is fixed to the detector score.
         self.segm_score_mode = "detector"
         self.segm_score_key = "scores"
+        self.shape_base_dense_mode = str(shape_base_dense_mode)
+        self.load_no_mask_pretrained = bool(load_no_mask_pretrained)
+        self.freeze_no_mask_embed = bool(freeze_no_mask_embed)
+        if self.shape_base_dense_mode not in {"no_mask", "zero"}:
+            raise ValueError(
+                "shape_base_dense_mode must be 'no_mask' or 'zero', got "
+                f"{self.shape_base_dense_mode!r}"
+            )
 
         self.mask_decoder = RSSAM2MaskDecoderWrapper(**sam2_mask_decoder)
         if self.prune_unused_prompt_components:
@@ -1345,6 +1353,10 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
                 _emb.weight.requires_grad_(_idx in _pe_trainable_indices)
             self.prompt_encoder.not_a_point_embed.weight.requires_grad_(False)
             self.prompt_encoder.no_mask_embed.weight.requires_grad_(False)
+            # The dense-mask convolution stack stays frozen unconditionally:
+            # the densefix-unfreeze ablation that could train it was removed.
+            for _p in self.prompt_encoder.mask_downscaling.parameters():
+                _p.requires_grad_(False)
             # 加载预训练权重 (对比项目遗漏, 本计划增量)
             # 问题 3：require_pretrained 默认 True——ckpt 不存在或 missing key 时直接 raise，
             # 避免静默随机初始化导致 PE 几何编码错误却继续训练。
