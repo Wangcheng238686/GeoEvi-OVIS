@@ -815,7 +815,7 @@ refiner.
 
 | 设计部分 | 当前实现文件 |
 |---|---|
-| C5-v2 实验入口 | `portable_sam2_explicit_coarse/scripts/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh` |
+| C5-v2 实验入口 | `portable_sam2_explicit_coarse/scripts/train/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh` |
 | 显式 coarse 配置 | `portable_sam2_explicit_coarse/configs/whu1024_baseplus_explicit_coarse.py` |
 | SAM image embedding/基础配置 | `portable_sam2_explicit_coarse/configs/whu1024_baseplus_clean.py` |
 | PAFPN、PromptEncoder 和 MaskDecoder 接线 | `portable_sam2_explicit_coarse/models/models_sam2.py` |
@@ -824,6 +824,6 @@ refiner.
 | P2-BRR | `portable_sam2_explicit_coarse/models/p2_boundary_refiner.py` |
 | Coarse/boundary auxiliary 接线 | `portable_sam2_explicit_coarse/models/models.py` |
 | 总损失与 DDP 归一化 | `portable_sam2_explicit_coarse/train/train.py` |
-| 严格对照 R1-C4 | `portable_sam2_explicit_coarse/scripts/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh` |
+| 严格对照 R1-C4 | `portable_sam2_explicit_coarse/scripts/train/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh` |
 
 本文档应随 C5-v2 的结构、数据流、损失、梯度边界或消融口径变化同步更新。

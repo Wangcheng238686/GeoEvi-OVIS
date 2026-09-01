@@ -20,18 +20,18 @@ topology-token 路线和卫星/UAV 双流分支已从主代码删除。
 cd portable_sam2_explicit_coarse
 
 # 组件与接线 smoke test
-bash scripts/smoke_test_components.sh
+bash tests/smoke_test_components.sh
 
 # 默认：PAFPN + points+box+dense，P2BoundaryRefiner 关闭
-bash scripts/run_whu1024_explicit_coarse.sh
+bash scripts/train/run_whu1024_explicit_coarse.sh
 
 # 官方 64×64 严格对照与唯一增量 C5-v2
-bash scripts/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh
-bash scripts/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
+bash scripts/train/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh
+bash scripts/train/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
 
 # 消融
-EXPLICIT_PROMPT_MODE=points_box bash scripts/run_whu1024_explicit_coarse.sh
-EXPLICIT_PROMPT_MODE=points_box bash scripts/run_whu1024_explicit_coarse.sh
+EXPLICIT_PROMPT_MODE=points_box bash scripts/train/run_whu1024_explicit_coarse.sh
+EXPLICIT_PROMPT_MODE=points_box bash scripts/train/run_whu1024_explicit_coarse.sh
 ```
 
 默认数据与预训练权重路径保持旧基线口径，并可通过 `WHU1024_DATA_ROOT`、
@@ -46,16 +46,16 @@ COCO 指标和预测 JSON：
 ```bash
 cd portable_sam2_explicit_coarse
 
-bash scripts/infer_whu_checkpoint.sh \
+bash scripts/inference/infer_whu_checkpoint.sh \
   /data/wangcheng/checkpoint/portable_sam2_explicit_coarse/ablations/EXPERIMENT/best_model.pth
 ```
 
 使用 WHU test 或自定义 COCO 测试集：
 
 ```bash
-bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --split test
+bash scripts/inference/infer_whu_checkpoint.sh /path/to/model.pth --split test
 
-bash scripts/infer_whu_checkpoint.sh /path/to/model.pth \
+bash scripts/inference/infer_whu_checkpoint.sh /path/to/model.pth \
   --split custom \
   --data-root /path/to/dataset \
   --ann-file annotations/test.json \
@@ -77,7 +77,7 @@ B0/B1保留旧基线的零初始化可训练MLP image PE；公共矩阵的detect
 概率统计，用于快速排除全空mask回归。
 
 消融入口统一放在
-`portable_sam2_explicit_coarse/scripts/ablations/`，覆盖 aggregator/PAFPN、
+`portable_sam2_explicit_coarse/scripts/train/ablations/`，覆盖 aggregator/PAFPN、
 旧 MLP/coarse、box、dense prompt 和 P2BoundaryRefiner。每次启动前都会检查解析后的配置
 是否与脚本声明一致。
 
@@ -85,30 +85,30 @@ B0/B1保留旧基线的零初始化可训练MLP image PE；公共矩阵的detect
 cd portable_sam2_explicit_coarse
 
 # 全矩阵 smoke；不会开始训练
-bash scripts/ablations/smoke_all.sh
+bash scripts/train/ablations/smoke_all.sh
 
 # 消融当前默认使用 20% train / 100% validation
-bash scripts/ablations/c4_pafpn_coarse_points_box_dense.sh
+bash scripts/train/ablations/c4_pafpn_coarse_points_box_dense.sh
 
 # MLP final-mask 坐标契约消融：B0/B1 的 full-image 对照
-bash scripts/ablations/m0_aggregator_mlp_full_image.sh
-bash scripts/ablations/m1_pafpn_mlp_full_image.sh
+bash scripts/train/ablations/m0_aggregator_mlp_full_image.sh
+bash scripts/train/ablations/m1_pafpn_mlp_full_image.sh
 
 # SAM2 image embedding 分辨率与 P2 边界细化严格对照
-bash scripts/ablations/r0_b0_aggregator_mlp_emb64.sh
-bash scripts/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh
-bash scripts/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
+bash scripts/train/ablations/r0_b0_aggregator_mlp_emb64.sh
+bash scripts/train/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh
+bash scripts/train/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
 
 # 默认 nohup + setsid 后台运行；前台调试时显式关闭
-RUN_IN_BACKGROUND=0 bash scripts/ablations/c4_pafpn_coarse_points_box_dense.sh
+RUN_IN_BACKGROUND=0 bash scripts/train/ablations/c4_pafpn_coarse_points_box_dense.sh
 
 # 比例仍可独立覆盖；全量训练需显式设置 TRAIN_SUBSET_RATIO=1.0
 TRAIN_SUBSET_RATIO=1.0 VAL_SUBSET_RATIO=1.0 \
-  bash scripts/ablations/c4_pafpn_coarse_points_box_dense.sh
+  bash scripts/train/ablations/c4_pafpn_coarse_points_box_dense.sh
 ```
 
 矩阵定义、参数覆盖和 dry-run 用法见
-`portable_sam2_explicit_coarse/scripts/ablations/README.md`。
+`portable_sam2_explicit_coarse/scripts/train/ablations/README.md`。
 
 机器相关路径统一维护在
 `portable_sam2_explicit_coarse/configs/environment.sh`。迁移到其他机器时，只需
@@ -123,7 +123,7 @@ GPU 默认值；所有训练、消融、推理、smoke 与监视器入口都会�
 数据、优化器、EMA、初始化/续训路径、有效全局 batch size、git commit 和完整
 torchrun 命令。可用 `LOG_DIR` 覆盖日志目录，或用 `LOG_FILE` 指定精确文件。
 并行实验可从最外层脚本传入独立端口，例如
-`bash scripts/ablations/b0_aggregator_mlp.sh --master-port 29601`；命令行端口优先于
+`bash scripts/train/ablations/b0_aggregator_mlp.sh --master-port 29601`；命令行端口优先于
 `MASTER_PORT` 环境变量，二者都未提供时自动派生端口。
 所有训练入口还通过公共运行器共享 `TORCH_DDP_TIMEOUT_SECONDS=1800`，避免
 rank-0-only 完整验证和 COCO 评估超过 PyTorch 默认 600 秒；可在最外围脚本前设置

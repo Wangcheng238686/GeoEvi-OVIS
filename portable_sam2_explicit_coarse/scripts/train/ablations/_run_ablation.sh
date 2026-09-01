@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 cd "${PROJECT_ROOT}"
-# shellcheck source=../load_environment.sh
+# shellcheck source=../../load_environment.sh
 source "${PROJECT_ROOT}/scripts/load_environment.sh"
 
 : "${ABLATION_ID:?wrapper must set ABLATION_ID}"
@@ -71,6 +71,8 @@ case "${PROMPT_ROUTE}" in
 esac
 
 export NECK_TYPE
+# Image-embedding resolution is fixed to the official stride-16 contract.
+export SAM_IMAGE_EMBED_STRIDE=16
 export FINAL_MASK_COORDINATE_MODE
 SHAPE_DENSE_TRANSFORM="${SHAPE_DENSE_TRANSFORM:-raw_logits}"
 case "${SHAPE_DENSE_TRANSFORM}" in

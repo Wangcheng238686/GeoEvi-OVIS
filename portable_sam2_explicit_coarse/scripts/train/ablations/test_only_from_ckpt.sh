@@ -2,20 +2,20 @@
 # Test-set inference from an arbitrary training checkpoint.
 #
 # Usage:
-#   bash scripts/ablations/test_only_from_ckpt.sh /path/to/xxx.pth [extra trainer args]
+#   bash scripts/train/ablations/test_only_from_ckpt.sh /path/to/xxx.pth [extra trainer args]
 #
 # Examples:
 #   # maxDet=150 (model cap + eval maxDets both set to 150)
-#   TEST_MAX_PER_IMG=150 bash scripts/ablations/test_only_from_ckpt.sh \
+#   TEST_MAX_PER_IMG=150 bash scripts/train/ablations/test_only_from_ckpt.sh \
 #       /data1/wangcheng/checkpoint/portable_sam2_explicit_coarse/ablations/<run_dir>/best_model_epoch98.pth
 #
 #   # COCO default maxDet=100 (do NOT set TEST_MAX_PER_IMG)
-#   bash scripts/ablations/test_only_from_ckpt.sh \
+#   bash scripts/train/ablations/test_only_from_ckpt.sh \
 #       /data1/wangcheng/checkpoint/portable_sam2_explicit_coarse/ablations/<run_dir>/best_model_epoch98.pth
 #
 #   # run on GPU 1
 #   CUDA_VISIBLE_DEVICES=1 TEST_MAX_PER_IMG=150 \
-#       bash scripts/ablations/test_only_from_ckpt.sh /path/to/xxx.pth
+#       bash scripts/train/ablations/test_only_from_ckpt.sh /path/to/xxx.pth
 #
 # The checkpoint's embedded config_snapshot / architecture_contract are parsed
 # and the launch environment (NECK_TYPE, PROMPT_ROUTE, EXPLICIT_PROMPT_MODE,
@@ -30,7 +30,7 @@
 #                          unset = COCO default maxDets=100
 #   TEST_VIS_OUT           e.g. logs/viz/e98: dump predictions.json and render
 #                          mask overlays onto the test images via
-#                          scripts/visualize_instances.py
+#                          tools/visualize_instances.py
 #   TEST_VIS_SCORE_THR     visualization score threshold, default 0.3
 #   TEST_VIS_LIMIT         max overlay images rendered, default 50
 #   RUN_TAG                default testonly_<ckpt_basename>
@@ -50,7 +50,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 if [[ $# -lt 1 ]]; then

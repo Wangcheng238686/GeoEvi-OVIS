@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 # shellcheck source=load_environment.sh
 source "${PROJECT_ROOT}/scripts/load_environment.sh"
@@ -18,13 +18,13 @@ export RUN_TAG="${RUN_TAG:-explicit_${EXPLICIT_PROMPT_MODE}_p2br${P2_BOUNDARY_RE
 # Image-embedding resolution is fixed to the official stride-16 contract.
 case "${EXPLICIT_PROMPT_MODE}:${P2_BOUNDARY_REFINER_ENABLED}" in
   points_box:0)
-    WRAPPER="scripts/ablations/r1_c3_pafpn_coarse_points_box_emb64.sh"
+    WRAPPER="scripts/train/ablations/r1_c3_pafpn_coarse_points_box_emb64.sh"
     ;;
   points_box_dense:0)
-    WRAPPER="scripts/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh"
+    WRAPPER="scripts/train/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh"
     ;;
   points_box_dense:1)
-    WRAPPER="scripts/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh"
+    WRAPPER="scripts/train/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh"
     ;;
   *)
     echo "Unsupported prompt/refiner combination: ${EXPLICIT_PROMPT_MODE}/${P2_BOUNDARY_REFINER_ENABLED}" >&2

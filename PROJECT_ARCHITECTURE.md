@@ -435,12 +435,12 @@ checkpoint。训练脚本、推理脚本都不得根据 checkpoint 文件名反�
 | 文件 | 用途 |
 |---|---|
 | `run_whu1024_explicit_coarse.sh` | 主线训练分发器（原名 `run_..._4gpu.sh` 已更名）；按 prompt/P2 组合路由到 r1_c3/r1_c4/c5v2 wrapper，复用公共 runner 的两卡默认值。 |
-| `load_environment.sh` | shell 环境统一加载器；优先读取被忽略的 `configs/environment.local.sh`，否则读取 `configs/environment.sh`，并支持 `PORTABLE_SAM2_ENV_FILE` 显式指定。 |
+| `load_environment.sh` | shell 环境统一加载器（保持原路径，作为所有入口的 source 锚点）；优先读取被忽略的 `configs/environment.local.sh`，否则读取 `configs/environment.sh`，并支持 `PORTABLE_SAM2_ENV_FILE` 显式指定。 |
 | `infer_whu_checkpoint.sh` | 指定 checkpoint 的单卡推理 shell 入口；其余参数透传给 Python 推理器。 |
 | `smoke_test_components.sh` | 启动轻量组件测试。 |
 | `smoke_test_components.py` | 检查 PAFPN、shape prior、2P2N、dense canvas、P2BoundaryRefiner 恒等/边界/梯度契约。 |
 
-`scripts/ablations/`：
+`scripts/train/ablations/`：
 
 | 文件 | 用途 |
 |---|---|
@@ -537,7 +537,7 @@ vim configs/environment.local.sh
 
 ```bash
 PORTABLE_SAM2_ENV_FILE=/absolute/path/to/environment.sh \
-bash scripts/ablations/b0_aggregator_mlp.sh
+bash scripts/train/ablations/b0_aggregator_mlp.sh
 ```
 
 外层已经导出的同名变量优先于配置文件中的默认值，仍支持单次实验覆盖。
@@ -545,25 +545,25 @@ bash scripts/ablations/b0_aggregator_mlp.sh
 组件 smoke：
 
 ```bash
-bash scripts/smoke_test_components.sh
+bash tests/smoke_test_components.sh
 ```
 
 消融 smoke，不启动训练：
 
 ```bash
 # 配置、命令、真实子集和代表性完整模型构建
-bash scripts/ablations/smoke_all.sh
+bash scripts/train/ablations/smoke_all.sh
 
 # 跳过完整模型构建的快速检查
-FULL_MODEL_SMOKE=0 bash scripts/ablations/smoke_all.sh
+FULL_MODEL_SMOKE=0 bash scripts/train/ablations/smoke_all.sh
 ```
 
 按消融当前默认口径启动 20% train / 100% validation：
 
 ```bash
-bash scripts/ablations/c4_pafpn_coarse_points_box_dense.sh
-bash scripts/ablations/c4_pafpn_coarse_points_box_dense_densefix.sh
-bash scripts/ablations/c4_pafpn_coarse_points_box_dense_densefix_unfreeze.sh
+bash scripts/train/ablations/c4_pafpn_coarse_points_box_dense.sh
+bash scripts/train/ablations/c4_pafpn_coarse_points_box_dense_densefix.sh
+bash scripts/train/ablations/c4_pafpn_coarse_points_box_dense_densefix_unfreeze.sh
 ```
 
 官方 64×64 的 dense/P2 归因矩阵应在同一机器上依次运行，避免并发争抢
@@ -571,11 +571,11 @@ bash scripts/ablations/c4_pafpn_coarse_points_box_dense_densefix_unfreeze.sh
 以下显式前台模式会让每条命令等待实验结束，因此整段保持严格串行：
 
 ```bash
-RUN_IN_BACKGROUND=0 bash scripts/ablations/r1_c3_pafpn_coarse_points_box_emb64.sh
-RUN_IN_BACKGROUND=0 bash scripts/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh
-RUN_IN_BACKGROUND=0 bash scripts/ablations/r1_c4_rd_pafpn_coarse_points_box_raw_detach_emb64.sh
-RUN_IN_BACKGROUND=0 bash scripts/ablations/r1_c4_g_pafpn_coarse_points_box_gaussian_emb64.sh
-RUN_IN_BACKGROUND=0 bash scripts/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
+RUN_IN_BACKGROUND=0 bash scripts/train/ablations/r1_c3_pafpn_coarse_points_box_emb64.sh
+RUN_IN_BACKGROUND=0 bash scripts/train/ablations/r1_c4_pafpn_coarse_points_box_dense_emb64.sh
+RUN_IN_BACKGROUND=0 bash scripts/train/ablations/r1_c4_rd_pafpn_coarse_points_box_raw_detach_emb64.sh
+RUN_IN_BACKGROUND=0 bash scripts/train/ablations/r1_c4_g_pafpn_coarse_points_box_gaussian_emb64.sh
+RUN_IN_BACKGROUND=0 bash scripts/train/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
 ```
 
 R1-C4→R1-C4-RD 只测 raw dense 的 final-mask 反向梯度；
@@ -589,13 +589,13 @@ applied-delta ratio确认模块实际生效。
 C2-L 的 points-only final-mask 信号消融：
 
 ```bash
-bash scripts/ablations/c2l_pafpn_coarse_points_roi_loss.sh
+bash scripts/train/ablations/c2l_pafpn_coarse_points_roi_loss.sh
 ```
 
 C2-R 的 ROI-SAM2 特征/坐标/监督协议消融：
 
 ```bash
-bash scripts/ablations/c2r_pafpn_coarse_points_roi_sam.sh
+bash scripts/train/ablations/c2r_pafpn_coarse_points_roi_sam.sh
 ```
 
 该命令会在终端打印实际日志文件路径，并默认写入
@@ -607,23 +607,23 @@ bash scripts/ablations/c2r_pafpn_coarse_points_roi_sam.sh
 并行实验从最外层脚本指定不同端口：
 
 ```bash
-bash scripts/ablations/b0_aggregator_mlp.sh --master-port 29601
-bash scripts/ablations/c2_pafpn_coarse_points.sh --master-port=29602
-bash scripts/ablations/c2l_pafpn_coarse_points_roi_loss.sh --master-port=29603
-bash scripts/ablations/c2r_pafpn_coarse_points_roi_sam.sh --master-port=29604
+bash scripts/train/ablations/b0_aggregator_mlp.sh --master-port 29601
+bash scripts/train/ablations/c2_pafpn_coarse_points.sh --master-port=29602
+bash scripts/train/ablations/c2l_pafpn_coarse_points_roi_loss.sh --master-port=29603
+bash scripts/train/ablations/c2r_pafpn_coarse_points_roi_sam.sh --master-port=29604
 ```
 
 前台调试：
 
 ```bash
-RUN_IN_BACKGROUND=0 bash scripts/ablations/b0_aggregator_mlp.sh
+RUN_IN_BACKGROUND=0 bash scripts/train/ablations/b0_aggregator_mlp.sh
 ```
 
 后台持续等待当前 B0，随后串行执行 B1、M0、M1、C1、C2、C2-L、C2-R、C3-C5、R0、R1：
 
 ```bash
 B0_LOG=/absolute/path/to/current_b0.log \
-nohup setsid bash scripts/ablations/monitor_b0_then_serial.sh \
+nohup setsid bash scripts/train/ablations/monitor_b0_then_serial.sh \
   >/dev/null 2>&1 &
 ```
 
@@ -639,32 +639,32 @@ nohup setsid bash scripts/ablations/monitor_b0_then_serial.sh \
 
 ```bash
 TRAIN_SUBSET_RATIO=1.0 VAL_SUBSET_RATIO=1.0 \
-bash scripts/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
+bash scripts/train/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
 ```
 
 只解析和核验，不训练：
 
 ```bash
 DRY_RUN=1 CHECK_DATA=1 PREFLIGHT_MODEL=1 \
-bash scripts/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
+bash scripts/train/ablations/c5v2_pafpn_coarse_p2_boundary_refiner_emb64.sh
 ```
 
 从 checkpoint 在完整 validation 上推理：
 
 ```bash
-bash scripts/infer_whu_checkpoint.sh /path/to/best_model.pth
+bash scripts/inference/infer_whu_checkpoint.sh /path/to/best_model.pth
 ```
 
 在 WHU test split 上推理：
 
 ```bash
-bash scripts/infer_whu_checkpoint.sh /path/to/best_model.pth --split test
+bash scripts/inference/infer_whu_checkpoint.sh /path/to/best_model.pth --split test
 ```
 
 自定义 COCO 测试集：
 
 ```bash
-bash scripts/infer_whu_checkpoint.sh /path/to/best_model.pth \
+bash scripts/inference/infer_whu_checkpoint.sh /path/to/best_model.pth \
   --split custom \
   --data-root /path/to/dataset \
   --ann-file annotations/test.json \
@@ -674,8 +674,8 @@ bash scripts/infer_whu_checkpoint.sh /path/to/best_model.pth \
 只查看 checkpoint 元数据或只验证模型重建：
 
 ```bash
-bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --inspect-only
-bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cpu
+bash scripts/inference/infer_whu_checkpoint.sh /path/to/model.pth --inspect-only
+bash scripts/inference/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cpu
 ```
 
 ## 6. 主要环境变量
@@ -774,7 +774,7 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 3. 修改配置继承或环境变量：更新第 4.1、6 节；
 4. 修改数据划分、路径或抽样：更新第 4.3 节；
 5. 修改训练 CLI、checkpoint 或评估协议：更新第 4.4、5 节；
-6. 新增实验 wrapper：更新消融表、命令示例和 `scripts/ablations/README.md`；
+6. 新增实验 wrapper：更新消融表、命令示例和 `scripts/train/ablations/README.md`；
 7. 新增影响模型或推理行为的参数：强制并入 `cfg.model`，并执行 checkpoint
    round-trip；
 8. 运行与改动风险相称的 smoke，并确保文档描述的是实际解析后的行为；
@@ -788,6 +788,17 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 处理本项目的新增或改动时，它负责默认执行上述同步流程。
 
 ## 8. 文档同步记录
+
+- 2026-09-01：`scripts/` 按用途重排。训练入口归入 `scripts/train/`
+  （主线分发器 + `ablations/` runner/wrappers/契约校验/test-only/smoke），
+  推理入口归入 `scripts/inference/`（`infer_whu_checkpoint.sh`、
+  `visualize_p2_checkpoint.sh`），`tests/smoke_test_components.sh` 归入
+  `tests/`；`load_environment.sh` 保持原路径作为统一 source 锚点。
+  附带修复：runner 中被误删的 `export SAM_IMAGE_EMBED_STRIDE=16` 已恢复
+  （B 级死导出清理时误伤），契约校验器对 `segm_score_mode` 改用
+  getattr 兜底（配置中该键已移除、模型内硬编码），校验器 sys.path 深度
+  适配新层级。验证：全部 shell `bash -n`；c5v2 与 r0 两个 wrapper 的
+  `DRY_RUN` 端到端（配置解析→契约校验→torchrun 命令组装）在本机通过。
 
 - 2026-09-01：主线目录重组（三项）。① `rsprompter/` 包更名为 `models/`
   （去掉旧项目方法名遗产；全部绝对导入、trainer/推理/契约校验/探针脚本

@@ -4,7 +4,7 @@
 # detached raw-logits dense prompt, no P2 refiner), trained on the leakage-free
 # ue_coco split (annotations/{train,val,test}.clean.json + unified images/).
 #
-# This wrapper is self-contained: it does NOT call scripts/ablations/_run_ablation.sh
+# This wrapper is self-contained: it does NOT call scripts/train/ablations/_run_ablation.sh
 # (which is WHU-specific) and instead builds the validate + torchrun command
 # directly. WHU experiments are untouched.
 #
@@ -113,7 +113,7 @@ VALIDATE_ARGS=(
   --subset-seed "${SUBSET_SEED}"
   --data-root "${UECOCO_DATA_ROOT}"
 )
-"${PYTHON}" "scripts/ablations/validate_ablation_contract.py" "${VALIDATE_ARGS[@]}"
+"${PYTHON}" "scripts/train/ablations/validate_ablation_contract.py" "${VALIDATE_ARGS[@]}"
 
 # ---- 2) Build the torchrun command ----
 CMD=(

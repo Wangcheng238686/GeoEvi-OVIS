@@ -9,7 +9,7 @@ cd "${PROJECT_ROOT}"
 # shellcheck source=load_environment.sh
 source "${PROJECT_ROOT}/scripts/load_environment.sh"
 
-# Architecture env must mirror scripts/ablations/paper_promptminer_rd_p2_whu_full.sh
+# Architecture env must mirror scripts/train/ablations/paper_promptminer_rd_p2_whu_full.sh
 # so the recorded config reproduces the checkpoint's architecture contract.
 export NECK_TYPE="pafpn"
 export PROMPT_ROUTE="coarse"

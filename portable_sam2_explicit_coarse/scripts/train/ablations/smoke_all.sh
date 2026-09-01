@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-# shellcheck source=../load_environment.sh
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+# shellcheck source=../../load_environment.sh
 source "${PROJECT_ROOT}/scripts/load_environment.sh"
 SMOKE_LOG_SENTINEL="${PORTABLE_SAM2_TMP_ROOT}/smoke_$$.log"
 if [[ -e "${SMOKE_LOG_SENTINEL}" ]]; then

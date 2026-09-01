@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
@@ -110,7 +110,7 @@ def main():
         "final-mask loss mode must be standard",
     )
     require(
-        head.segm_score_mode == "detector",
+        getattr(head, "segm_score_mode", "detector") == "detector",
         "segmentation score mode must be detector",
     )
 
@@ -299,7 +299,7 @@ def main():
         "final_mask_coordinate_mode": head.final_mask_coordinate_mode,
         "final_mask_loss_mode": actual_final_mask_loss_mode,
         "final_mask_loss_config": dict(final_mask_loss_cfg),
-        "segm_score_mode": head.segm_score_mode,
+        "segm_score_mode": getattr(head, "segm_score_mode", "detector"),
         "segm_score_key": "scores",
         "p2_boundary_refiner_config": dict(head.p2_boundary_refiner_cfg),
         "architecture_contract": resolved_architecture,
