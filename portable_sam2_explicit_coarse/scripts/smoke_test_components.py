@@ -396,7 +396,7 @@ def main():
 
     try:
         ShapePriorInjector(typo_context_tokens=64)
-    except TypeError:
+    except ValueError:
         pass
     else:
         raise AssertionError("unknown ShapePrior config keys must fail fast")

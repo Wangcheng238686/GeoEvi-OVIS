@@ -226,7 +226,11 @@ rsprompter_anchor_satS_v11_sam2_large_full.py
 |---|---|
 | `__init__.py` | 注册 MMDetection 模型组件；`RSPROMPTER_LIGHT_IMPORT=1` 用于轻量张量测试。 |
 | `models.py` | detector（`RSPrompterAnchor`）与 RoI head（`RSPrompterAnchorRoIPromptHead`）；旧 SAM1/RSPrompter 兼容组件与死掉的 `_shape_prior_aux_loss` 已于 2026-09-01 删除。 |
-| `models_sam2.py` | SAM2 主实现：vision encoder、基线 aggregator、PAFPN、MaskDecoder wrapper、MLP/coarse 双路线 MaskHead。 |
+| `models_sam2.py` | SAM2 权重加载器与共享 shim（`SAM2_AVAILABLE`、`_load_sam2_checkpoint` 等），并 re-export 全部组件类保持历史导入面。 |
+| `vision_encoder.py` | `RSSAM2PositionalEmbedding`、`RSSAM2VisionEncoder`（Hiera + LoRA）。 |
+| `necks.py` | `RSFeatureAggregatorSAM2`（旧 neck 对照）与 `RSSAM2PAFPN`。 |
+| `mask_decoder.py` | `RSSAM2MaskDecoderWrapper`（SAM2 MaskDecoder 严格加载包装）。 |
+| `mask_head.py` | `RSPrompterAnchorMaskHeadSAM2`（MLP/coarse 双路线 MaskHead）：`__init__`+`forward` 主干、Prompt/诊断 mixin、目标与 loss mixin（`mask_head_targets.py`）。 |
 | `shape_prior.py` | `ShapePriorInjector`、小型 coarse mask decoder、RoI box encoding 和 `ShapePointMiner`。 |
 | `coarse_mask_loss.py` | coarse mask 的 BCE、Dice、boundary、distance 组合损失及权重调度。 |
 | `dense_prompt_utils.py` | raw/confidence coarse 变换、ROI-local mask 粘贴，以及 R1-C4-G 的 detached exact-EDT Gaussian 挖掘与图像空间映射。 |
@@ -782,6 +786,19 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 处理本项目的新增或改动时，它负责默认执行上述同步流程。
 
 ## 8. 文档同步记录
+
+- 2026-09-01：C 级追加项——拆分 `rsprompter/models_sam2.py`（2442 行）。
+  新模块：`vision_encoder.py`（468 行，位置编码 + Hiera/LoRA 编码器）、
+  `necks.py`（335 行，aggregator/PAFPN）、`mask_decoder.py`（233 行，
+  MaskDecoder 包装）、`mask_head.py`（1185 行，MaskHead `__init__`/forward
+  主干 + Prompt mixin + 类组装）、`mask_head_targets.py`（310 行，targets/
+  loss/predict mixin）；`models_sam2.py` 保留共享权重加载器（monkeypatch
+  测试语义不变）并显式 re-export 全部组件类，历史导入面零变化。
+  修复拆分引入的三处机械错误（类装饰器丢失、静态方法装饰器丢失、
+  sam2 符号模块级硬导入导致的循环导入）。验证：注册表/导入面检查、
+  组件 smoke（含 monkeypatch 用例）、7 架构等价探针 7/7 逐位一致。
+  另：组件 smoke 中 ShapePriorInjector 未知 key 的期望异常由 TypeError
+  更正为 ValueError（B 级 FiLM 删除时引入的测试期望滞后）。
 
 - 2026-09-01：C 级第 1、3 项完成并验证。C1：`train/train.py`（原
   3249 行）的 41 个顶层 helper 按职责机械拆分至
