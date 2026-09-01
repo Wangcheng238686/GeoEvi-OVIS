@@ -20,7 +20,7 @@
 
 新主线只保留已经选定的 PAFPN、显式 coarse mask、原生 PromptEncoder 加载，
 以及实验性的 Gaussian dense 表示和 P2BoundaryRefiner。旧 DenseBR 已从当前代码删除；IIMR、多轮 mask
-memory、topology token、SABL refined-box 依赖等不属于
+memory、topology token、SABL refined-box 依赖、卫星/UAV 双流数据与分支等不属于
 新主线。
 
 历史基线与新主线必须使用不同的输出目录，不能覆盖历史 checkpoint。
@@ -238,10 +238,9 @@ rsprompter_anchor_satS_v11_sam2_large_full.py
 | 文件 | 用途 |
 |---|---|
 | `__init__.py` | 导出 `create_train_loader` 并注册 `AdaptiveResize`。 |
-| `loader.py` | 统一构造 train/validation DataLoader；实现独立、确定性的 train/val 子集抽样。 |
+| `loader.py` | 统一构造 train/validation DataLoader；实现独立、确定性的 train/val 子集抽样。仅支持单流 `whu_coco` 与旧 LabelMe 单流数据；卫星/UAV 双流分支已删除。 |
 | `whu_instance_dataset.py` | 当前 WHU COCO 实例分割数据集实现。 |
 | `satellite_dataset.py` | 旧 LabelMe 卫星数据兼容数据集。 |
-| `satellite_drone_dataset.py` | 旧卫星/UAV 双流兼容数据集；当前 WHU 主线不使用。 |
 
 WHU 默认路径：
 
@@ -777,6 +776,19 @@ bash scripts/reproduce_legacy_segm.sh
 处理本项目的新增或改动时，它负责默认执行上述同步流程。
 
 ## 8. 文档同步记录
+
+- 2026-09-01：删除卫星/UAV 双流残留，项目收敛为纯单流。删除
+  `data/satellite_drone_dataset.py`；`data/loader.py` 移除 drone 分支与
+  `use_drone`/`drone_*`/`num_views`/`normalize_drone`/`random_sample` 参数；
+  训练入口移除 `--use-drone`、`--drone-*`、`--uav-*`（含 A/B/C/D 消融与
+  debug-stats 参数）、`--scene-align-lr-mult`、`--max-scenes` 与 depth
+  debug/快照死参数，优化器删除 `drone_guidance`/`scene_alignment` 参数组；
+  `mask head` 输出契约由 6 元组改为 5 元组（删除恒为空的 `uav_aux_losses`
+  槽位），`get_uav_debug_stats`/`_last_uav_debug_stats` 更名为
+  `get_prompt_debug_stats`/`_last_prompt_debug_stats`，训练日志函数更名为
+  `_log_prompt_debug_stats`。CLI 字面与 checkpoint `training_args` 快照随之
+  变化；旧 checkpoint 的快照字段保持只读历史，不参与模型重建（模型结构由
+  `model_config` 决定，本次未改动）。
 
 - 2026-07-30：新增 R1-C4-RD/G 表示消融。RD 对 raw-logit dense 显式 detach；G
   在同一梯度边界下使用 ROI exact-EDT 中心/面积映射得到 full-image 正值 Gaussian，

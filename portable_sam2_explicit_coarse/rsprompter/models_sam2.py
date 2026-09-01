@@ -2028,11 +2028,9 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
             out[f"SP/{name}_gt_valid_count"] = valid.sum().detach()
         return out
 
-    def get_uav_debug_stats(self) -> Dict[str, float]:
-        # UAV branch removed (doc §1). This stub is kept for backward
-        # compatibility with the legacy trainer logger call sites; it now
-        # surfaces the GT-point diagnostics previously written here.
-        return dict(getattr(self, "_last_uav_debug_stats", {}) or {})
+    def get_prompt_debug_stats(self) -> Dict[str, float]:
+        """Forward + GT-point diagnostics collected during the latest pass."""
+        return dict(getattr(self, "_last_prompt_debug_stats", {}) or {})
 
     def _roi_sam_local_boxes(self, boxes: Tensor) -> Tensor:
         """Return canonical full-canvas boxes for ROI-local PromptEncoder input."""
@@ -2508,7 +2506,7 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
         # these values lived only in this local dictionary, so the logger could
         # not observe the effective dense residual even when debug logging was
         # enabled.  Detach tensors to avoid retaining the autograd graph.
-        self._last_uav_debug_stats = {
+        self._last_prompt_debug_stats = {
             key: value.detach() if torch.is_tensor(value) else value
             for key, value in debug_stats.items()
         }
@@ -2516,7 +2514,6 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
             low_res_masks,
             iou_predictions,
             coarse_outputs,
-            {},  # uav_aux_losses slot kept for the 6-tuple contract; UAV removed
             quality_predictions,
             mask_tokens_out,
         )
@@ -2794,9 +2791,9 @@ class RSPrompterAnchorMaskHeadSAM2(FCNMaskHead, BaseModule):
             mask_size=target_size, prompt_pos_priors=prompt_pos_priors,
         )
         gt_point_stats = self._shape_point_gt_stats(coarse_targets)
-        if not hasattr(self, "_last_uav_debug_stats") or self._last_uav_debug_stats is None:
-            self._last_uav_debug_stats = {}
-        self._last_uav_debug_stats.update(gt_point_stats)
+        if not hasattr(self, "_last_prompt_debug_stats") or self._last_prompt_debug_stats is None:
+            self._last_prompt_debug_stats = {}
+        self._last_prompt_debug_stats.update(gt_point_stats)
         return self.coarse_mask_loss_module(shape_prior_mask_logits, coarse_targets)
 
     def loss_and_target(

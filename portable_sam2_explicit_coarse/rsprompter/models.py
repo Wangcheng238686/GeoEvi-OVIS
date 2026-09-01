@@ -559,11 +559,6 @@ class RSPrompterAnchor(MaskRCNN):
             return {}
         return roi_head.get_prompt_debug_stats()
 
-    # Backward-compatible training logger entry.  The canonical single-stream
-    # shape-point model has no UAV branch, but the legacy logger calls this name.
-    def get_uav_debug_stats(self) -> Dict[str, object]:
-        return self.get_prompt_debug_stats()
-
     def get_image_wide_positional_embeddings(self, size):
         pos_embed = self.shared_image_embedding.get_dense_pe()
         
@@ -733,8 +728,8 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
     def get_prompt_debug_stats(self) -> Dict[str, object]:
         stats: Dict[str, object] = {}
         mask_head = getattr(self, "mask_head", None)
-        if mask_head is not None and hasattr(mask_head, "get_uav_debug_stats"):
-            stats.update(mask_head.get_uav_debug_stats())
+        if mask_head is not None and hasattr(mask_head, "get_prompt_debug_stats"):
+            stats.update(mask_head.get_prompt_debug_stats())
         for key, value in (getattr(self, "_last_coarse_stats", {}) or {}).items():
             stats[f"COARSE/{key}"] = value
         stats.update(getattr(self, "_last_box_jitter_stats", {}) or {})
@@ -880,16 +875,15 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
             p2_feature=x[0],
             prompt_rois=prompt_rois,
         )
-        if len(mask_head_out) != 6:
+        if len(mask_head_out) != 5:
             raise RuntimeError(
-                "Canonical mask head must return 6 values, got "
+                "Canonical mask head must return 5 values, got "
                 f"{len(mask_head_out)}"
             )
         (
             mask_preds,
             iou_predictions,
             coarse_outputs,
-            uav_aux_losses,
             quality_predictions,
             mask_tokens,
         ) = mask_head_out
@@ -900,7 +894,6 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
             quality_predictions=quality_predictions,
             mask_tokens=mask_tokens,
             coarse_outputs=coarse_outputs,
-            uav_aux_losses=uav_aux_losses,
         )
 
     def mask_loss(
@@ -1202,11 +1195,6 @@ class RSPrompterAnchorRoIPromptHead(StandardRoIHead):
                         "boundary_loss_local_sum": local_sum.detach(),
                         **{k: v.detach() for k, v in boundary_stats.items()},
                     })
-
-        uav_aux_losses = mask_results.get("uav_aux_losses") or {}
-        for loss_name, loss_value in uav_aux_losses.items():
-            if loss_value is not None:
-                mask_results[loss_name] = {loss_name: loss_value}
 
         return mask_results
 

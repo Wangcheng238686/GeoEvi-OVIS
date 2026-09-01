@@ -471,14 +471,12 @@ def _build_optimizer(
     sat_backbone_lr_mult: float,
     sat_other_lr_mult: float,
     bbox_head_lr_mult: float,
-    drone_lr_mult: float,
     mask_decoder_lr_mult: float = 0.05,
     no_mask_lr_mult: float = 0.1,
     prompt_encoder_lr_mult: float = 0.1,
     shape_prior_lr_mult: float = 1.0,
     p2_boundary_refiner_lr_mult: float = 1.0,
     quality_head_lr_mult: float = 1.0,
-    scene_align_lr_mult: float = 2.0,
     weight_decay: float = 0.05,
 ) -> optim.Optimizer:
     params_sat_backbone = []
@@ -499,29 +497,12 @@ def _build_optimizer(
     names_bbox_head = []
     params_sat_other = []
     names_sat_other = []
-    params_drone = []
-    names_drone = []
-    params_scene_align = []
-    names_scene_align = []
 
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
         match_name = name.replace("_fsdp_wrapped_module.", "").replace("module.", "")
-        if "scene_alignment" in match_name:
-            params_scene_align.append(param)
-            names_scene_align.append(name)
-        elif (
-            match_name.startswith("drone_encoder.")
-            or match_name.startswith("guidance.")
-            or match_name.startswith("bottom_up.")
-            or "roi_head.mask_head.uav_roi_" in match_name
-            or "roi_head.mask_head.uav_dense_prompt_scale" in match_name
-            or "roi_head.mask_head.uav_prompt_adapter_" in match_name
-        ):
-            params_drone.append(param)
-            names_drone.append(name)
-        elif match_name.startswith("backbone.") or match_name.startswith("shared_image_embedding."):
+        if match_name.startswith("backbone.") or match_name.startswith("shared_image_embedding."):
             params_sat_backbone.append(param)
             names_sat_backbone.append(name)
         elif (
@@ -654,16 +635,6 @@ def _build_optimizer(
             }
         )
         audit_groups.append(("sat_other", params_sat_other, names_sat_other, lr * sat_other_lr_mult, weight_decay))
-    if params_drone:
-        param_groups.append(
-            {"params": params_drone, "lr": lr * drone_lr_mult, "name": "drone_guidance"}
-        )
-        audit_groups.append(("drone_guidance", params_drone, names_drone, lr * drone_lr_mult, weight_decay))
-    if params_scene_align:
-        param_groups.append(
-            {"params": params_scene_align, "lr": lr * drone_lr_mult * scene_align_lr_mult, "name": "scene_alignment"}
-        )
-        audit_groups.append(("scene_alignment", params_scene_align, names_scene_align, lr * drone_lr_mult * scene_align_lr_mult, weight_decay))
 
     if not param_groups:
         raise RuntimeError(
@@ -822,12 +793,6 @@ def _log_trainable_state(model: torch.nn.Module):
         "quality_head": _get_quality_head(model_core)
         if mask_head is not None and getattr(mask_head, "quality_head_enabled", False)
         else None,
-        "uav_roi_retriever": getattr(mask_head, "uav_roi_retriever", None) if mask_head is not None else None,
-        "uav_roi_gate": getattr(mask_head, "uav_roi_gate", None) if mask_head is not None else None,
-        "uav_roi_dense_prompt": getattr(mask_head, "uav_roi_dense_prompt", None) if mask_head is not None else None,
-        "uav_roi_prompt_adapter": getattr(mask_head, "uav_roi_prompt_adapter", None) if mask_head is not None else None,
-        "uav_prompt_adapter_sparse_scale": getattr(mask_head, "uav_prompt_adapter_sparse_scale", None) if mask_head is not None else None,
-        "uav_prompt_adapter_dense_scale": getattr(mask_head, "uav_prompt_adapter_dense_scale", None) if mask_head is not None else None,
     }
     for name, module in checks.items():
         if module is None:
@@ -843,7 +808,7 @@ def _log_trainable_state(model: torch.nn.Module):
         logger.info("Trainable state %-22s %d / %d", name, trainable, total)
 
 
-def _log_uav_debug_stats(
+def _log_prompt_debug_stats(
     model: torch.nn.Module,
     epoch: int,
     step: int,
@@ -851,8 +816,6 @@ def _log_uav_debug_stats(
 ) -> None:
     model_core = model.module if hasattr(model, "module") else model
     getter = getattr(model_core, "get_prompt_debug_stats", None)
-    if getter is None:
-        getter = getattr(model_core, "get_uav_debug_stats", None)
     if getter is None:
         return
     stats = getter()
@@ -868,7 +831,7 @@ def _log_uav_debug_stats(
             continue
         prefix, _, name = key.partition("/")
         if not name:
-            prefix, name = "UAV", prefix
+            continue
         if enabled_prefixes is not None and prefix not in enabled_prefixes:
             continue
         groups.setdefault(prefix, {})[name] = float(value)
@@ -1324,7 +1287,7 @@ def _materialize_p2_boundary_refiner_loss(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="portable_sam_fusion: RSPrompter(SAM) + Drone semantic guidance"
+        description="portable_sam2_explicit_coarse: single-stream WHU-1024 SAM2 training"
     )
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument(
@@ -1351,7 +1314,6 @@ def main():
     )
     parser.add_argument("--gpu-id", type=int, default=0)
 
-    parser.add_argument("--use-drone", action="store_true", default=False)
     parser.add_argument(
         "--use-whu-coco",
         action="store_true",
@@ -1376,32 +1338,7 @@ def main():
         default=1.0,
         help="Deterministic fraction of WHU validation images to load; default 1.0.",
     )
-    parser.add_argument(
-        "--drone-data-root",
-        type=str,
-        default="/data/wangcheng/dataset/university-test/D",
-    )
-    parser.add_argument("--num-views", type=int, default=15)
     parser.add_argument("--image-size", type=int, nargs=2, default=[512, 512])
-    parser.add_argument("--drone-image-size", type=int, nargs=2, default=[512, 512])
-    parser.add_argument(
-        "--random-sample", action="store_true", help="Randomly sample drone images"
-    )
-    parser.add_argument(
-        "--normalize-drone",
-        dest="normalize_drone",
-        action="store_true",
-        help="Apply dataset-side normalization to drone images (WARNING: causes double "
-             "normalization because the UAV encoder also normalizes internally).",
-    )
-    parser.add_argument(
-        "--no-normalize-drone",
-        dest="normalize_drone",
-        action="store_false",
-        help="Disable dataset-side normalization (default). The UAV encoder's internal "
-             "self.norm handles normalization, so dataset-side normalization is redundant.",
-    )
-    parser.set_defaults(normalize_drone=False)
 
     parser.add_argument("--use-fsdp", action="store_true")
     parser.add_argument("--fsdp-sharding", type=str, default="FULL_SHARD")
@@ -1461,16 +1398,13 @@ def main():
         default=0.0,
         help="Use >0 to place bbox_head in a separate optimizer group",
     )
-    parser.add_argument("--drone-lr-mult", type=float, default=0.5)
     parser.add_argument("--mask-decoder-lr-mult", type=float, default=1.0)
     parser.add_argument("--no-mask-lr-mult", type=float, default=1.0)
     parser.add_argument("--prompt-encoder-lr-mult", type=float, default=0.1)
     parser.add_argument("--shape-prior-lr-mult", type=float, default=1.0)
     parser.add_argument("--p2-boundary-refiner-lr-mult", type=float, default=1.0)
     parser.add_argument("--quality-head-lr-mult", type=float, default=1.0)
-    parser.add_argument("--scene-align-lr-mult", type=float, default=2.0, help="Learning rate multiplier for scene alignment parameters")
     parser.add_argument("--grad-accum-steps", type=int, default=2)
-    parser.add_argument("--max-scenes", type=int, default=1000, help="Maximum number of scenes for scene-specific alignment")
     parser.add_argument("--warmup-epochs", type=int, default=0, help="Number of warmup epochs for learning rate scheduling")
     parser.add_argument("--warmup-iters", type=int, default=100, help="Number of warmup optimizer steps (overrides warmup-epochs if > 0)")
     parser.add_argument("--weight-decay", type=float, default=0.05, help="Weight decay for optimizer")
@@ -1487,83 +1421,10 @@ def main():
     parser.add_argument("--ema-eval", type=int, default=1, help="Use EMA shadow weights for validation")
     parser.add_argument("--ema-save-best", type=int, default=1, help="Save best_model using EMA shadow weights")
     parser.add_argument("--ema-eval-start-epoch", type=int, default=5, help="Start using EMA for eval after this epoch")
-    parser.add_argument("--uav-debug-stats", type=int, choices=[0, 1], default=0,
-                        help="Print per-scheme UAV diagnostic stats during training")
-    parser.add_argument("--uav-debug-stats-interval", type=int, default=50,
-                        help="Training iteration interval for UAV diagnostic stats")
     parser.add_argument("--prompt-debug-stats", type=int, choices=[0, 1], default=0,
                         help="Print shape-point/coarse-mask prompt diagnostics")
     parser.add_argument("--prompt-debug-stats-interval", type=int, default=50,
                         help="Training iteration interval for prompt diagnostics")
-    parser.add_argument("--depth-debug-stats", type=int, choices=[0, 1], default=0,
-                        help="Print depth module diagnostic stats during training")
-    parser.add_argument("--depth-debug-stats-interval", type=int, default=50,
-                        help="Training iteration interval for depth diagnostic stats")
-    # UAV 双流 A/B/C/D 消融参数。默认 None 表示尊重 config/env 中的值；
-    # shell 脚本传入后会在这里覆盖 cfg, 方便同一份 config 切实验。
-    parser.add_argument("--uav-fpn-enabled", type=int, choices=[0, 1], default=None,
-                        help="方案 A: 是否启用 UAV BEV -> satellite FPN deformable fusion")
-    parser.add_argument("--uav-fpn-use-bottom-up", type=int, choices=[0, 1], default=None,
-                        help="方案 A: deformable fusion 后是否启用 bottom-up PAFPN 聚合")
-    parser.add_argument("--uav-fpn-num-heads", type=int, default=None,
-                        help="方案 A: FPN deformable fusion 的 attention head 数")
-    parser.add_argument("--uav-fpn-num-points", type=int, default=None,
-                        help="方案 A: 每个 head 在 UAV BEV 上采样的点数")
-    parser.add_argument("--uav-fpn-max-offset", type=float, default=None,
-                        help="方案 A: deformable sampling 相对偏移上限")
-    parser.add_argument("--uav-align-loss-weight", type=float, default=None,
-                        help="方案 A: UAV/卫星几何对齐辅助损失权重")
-    parser.add_argument("--uav-concentration-weight", type=float, default=None,
-                        help="方案 A: 采样点集中度辅助损失权重")
-    parser.add_argument("--uav-roi-retrieval-enabled", type=int, choices=[0, 1], default=None,
-                        help="B/C/D 公共前置: ROI 级 UAV BEV deformable retrieval")
-    parser.add_argument("--uav-roi-gate-enabled", type=int, choices=[0, 1], default=None,
-                        help="方案 B: 用 UAV ROI context 对 mask_head ROI feature 做 FiLM gate")
-    parser.add_argument("--uav-roi-dense-prompt-enabled", type=int, choices=[0, 1], default=None,
-                        help="方案 C: 用 UAV ROI dense prompt 替代 shape prior dense prompt")
-    parser.add_argument(
-        "--uav-roi-dense-combine",
-        type=str,
-        default=None,
-        choices=["exclusive", "replace"],
-        help="方案 C: 当前仅支持 replace/exclusive, 都表示替换 shape prior 而非融合",
-    )
-    parser.add_argument("--uav-roi-bev-dim", type=int, default=None,
-                        help="B/C/D retrieval 输入 BEV 通道数, 默认 128 BEV + 1 height/depth = 129")
-    parser.add_argument("--uav-roi-d-inner", type=int, default=None,
-                        help="B/C/D retrieval 内部 context 维度")
-    parser.add_argument("--uav-roi-num-heads", type=int, default=None,
-                        help="B/C/D retrieval 的 attention head 数")
-    parser.add_argument("--uav-roi-num-points", type=int, default=None,
-                        help="B/C/D retrieval 每个 head 采样点数")
-    parser.add_argument("--uav-roi-max-offset", type=float, default=None,
-                        help="B/C/D retrieval ROI 中心附近的最大归一化采样偏移")
-    parser.add_argument("--uav-roi-multi-scale", type=int, choices=[0, 1], default=None,
-                        help="B retrieval: 构造多层 BEV 金字塔并按 ROI 尺度选层")
-    parser.add_argument("--uav-roi-level-match", type=int, choices=[0, 1], default=None,
-                        help="B retrieval: 是否用 ROI 尺度匹配 BEV 层级")
-    parser.add_argument("--uav-roi-num-bev-levels", type=int, default=None,
-                        help="B retrieval: 多层 BEV 金字塔层数")
-    parser.add_argument("--uav-roi-finest-scale", type=float, default=None,
-                        help="B retrieval: ROI 分配到 P4 的尺度基准")
-    parser.add_argument("--uav-roi-offset-loss-weight", type=float, default=None,
-                        help="B retrieval: offset 范数辅助约束权重")
-    parser.add_argument("--uav-roi-attn-uniform-loss-weight", type=float, default=None,
-                        help="B retrieval: attention 防塌缩辅助约束权重")
-    parser.add_argument("--uav-roi-dense-scale-init", type=float, default=None,
-                        help="方案 C dense prompt scale 初值, 0 表示严格热启动")
-    parser.add_argument("--uav-roi-dense-mid-channels", type=int, default=None,
-                        help="方案 C dense prompt 小头的中间通道数")
-    parser.add_argument("--uav-roi-prompt-adapter-enabled", type=int, choices=[0, 1], default=None,
-                        help="方案 D: BEV-conditioned prompt adapter before SAM2 mask decoder")
-    parser.add_argument("--uav-roi-prompt-adapter-hidden-dim", type=int, default=None,
-                        help="方案 D prompt adapter MLP hidden dim")
-    parser.add_argument("--uav-roi-prompt-adapter-sparse-scale-init", type=float, default=None,
-                        help="方案 D sparse prompt delta scale 初值, 0 表示严格热启动")
-    parser.add_argument("--uav-roi-prompt-adapter-dense-scale-init", type=float, default=None,
-                        help="方案 D dense prompt delta scale 初值, 0 表示严格热启动")
-    parser.add_argument("--uav-roi-prompt-adapter-use-confidence", type=int, choices=[0, 1], default=None,
-                        help="方案 D: 是否用 confidence gate 缩放 BEV adapter delta")
 
     args = parser.parse_args()
 
@@ -1668,10 +1529,6 @@ def main():
             resolved_architecture["model_fingerprint"],
         )
 
-    # B/C/D 都依赖 ROI retrieval；C 还依赖 SAM2 PromptEncoder 的 masks= 通道。
-    # 这里再做一次联动兜底, 避免只改顶层镜像或只改 shell 参数导致半开配置。
-    if hasattr(cfg.model, 'max_scenes'):
-        cfg.model.max_scenes = args.max_scenes
     model = MODELS.build(cfg.model)
     model.to(device)
 
@@ -1719,19 +1576,6 @@ def main():
             segm_score_mode,
         )
 
-    enable_drone_branch = getattr(model_for_preproc, "enable_drone_branch", False)
-    if args.use_drone and not enable_drone_branch:
-        logger.warning(
-            "--use-drone is set but model has enable_drone_branch=False. "
-            "Disabling drone data loading."
-        )
-        args.use_drone = False
-    if enable_drone_branch and not args.use_drone:
-        logger.info(
-            "Model has enable_drone_branch=True but --use-drone not set. "
-            "Will use drone branch if drone data is available."
-        )
-
     if args.freeze_bn:
         _set_norm_eval(model)
 
@@ -1755,22 +1599,11 @@ def main():
         sharding = getattr(
             ShardingStrategy, args.fsdp_sharding, ShardingStrategy.FULL_SHARD
         )
-        ignored_modules = None
-        model_base = model.module if hasattr(model, "module") else model
-        if (
-            getattr(model_base, "freeze_drone", False)
-            and hasattr(model_base, "drone_encoder")
-            and model_base.drone_encoder is not None
-        ):
-            model_base.drone_encoder.requires_grad_(False)
-            model_base.drone_encoder.eval()
-            ignored_modules = [model_base.drone_encoder]
 
         model = FSDP(
             model,
             sharding_strategy=sharding,
             device_id=int(device.split(":")[1]) if device.startswith("cuda") else None,
-            ignored_modules=ignored_modules,
             use_orig_params=True,
             min_num_params=int(args.fsdp_min_num_params),
         )
@@ -1797,8 +1630,6 @@ def main():
         create_train_loader(
             data_root=args.data_root,
             batch_size=args.batch_size,
-            # Horizontal flip is safe for dual-stream after fix:
-            # only intrinsics cx is adjusted (cx -> W-cx); extrinsics are unchanged.
             flip_prob=0.5,
             vflip_prob=0.0,
             gaussian_noise_prob=0.0,
@@ -1807,17 +1638,11 @@ def main():
             random_erasing_scale=(0.02, 0.15),
             random_erasing_ratio=(0.3, 3.3),
             image_size=tuple(args.image_size),
-            use_drone=args.use_drone,
-            drone_data_root=args.drone_data_root,
-            num_views=args.num_views,
-            drone_image_size=tuple(args.drone_image_size),
             distributed=distributed,
             rank=rank,
             world_size=int(dist_info.get("world_size", 1)),
             val_ratio=args.val_ratio,
             val_batch_size=args.val_batch_size,
-            random_sample=args.random_sample,
-            normalize_drone=args.normalize_drone,
             dataset_format="whu_coco" if args.use_whu_coco else "labelme",
             whu_train_ann_file="2.4 annotation/annotation/train.json",
             whu_val_ann_file="2.4 annotation/annotation/validation.json",
@@ -1870,14 +1695,12 @@ def main():
         sat_backbone_lr_mult=args.sat_backbone_lr_mult,
         sat_other_lr_mult=args.sat_other_lr_mult,
         bbox_head_lr_mult=args.bbox_head_lr_mult,
-        drone_lr_mult=args.drone_lr_mult,
         mask_decoder_lr_mult=args.mask_decoder_lr_mult,
         no_mask_lr_mult=args.no_mask_lr_mult,
         prompt_encoder_lr_mult=args.prompt_encoder_lr_mult,
         shape_prior_lr_mult=args.shape_prior_lr_mult,
         p2_boundary_refiner_lr_mult=args.p2_boundary_refiner_lr_mult,
         quality_head_lr_mult=args.quality_head_lr_mult,
-        scene_align_lr_mult=args.scene_align_lr_mult,
         weight_decay=args.weight_decay,
     )
     if is_main:
@@ -2054,44 +1877,8 @@ def main():
         "bbox_iou_loss_weight": os.environ.get("AP75_BBOX_IOU_LOSS_WEIGHT", ""),
         "init_from": args.init_from or "",
         "init_exclude_prefixes": args.init_exclude_prefixes,
-        "uav_fpn_enabled": args.uav_fpn_enabled,
-        "uav_fpn_use_bottom_up": args.uav_fpn_use_bottom_up,
-        "uav_fpn_num_heads": args.uav_fpn_num_heads,
-        "uav_fpn_num_points": args.uav_fpn_num_points,
-        "uav_fpn_max_offset": args.uav_fpn_max_offset,
-        "uav_align_loss_weight": args.uav_align_loss_weight,
-        "uav_concentration_weight": args.uav_concentration_weight,
-        "uav_roi_retrieval_enabled": args.uav_roi_retrieval_enabled,
-        "uav_roi_gate_enabled": args.uav_roi_gate_enabled,
-        "uav_roi_dense_prompt_enabled": args.uav_roi_dense_prompt_enabled,
-        "uav_roi_dense_combine": args.uav_roi_dense_combine,
-        "uav_roi_prompt_adapter_enabled": args.uav_roi_prompt_adapter_enabled,
-        "uav_roi_prompt_adapter_hidden_dim": args.uav_roi_prompt_adapter_hidden_dim,
-        "uav_roi_prompt_adapter_sparse_scale_init": args.uav_roi_prompt_adapter_sparse_scale_init,
-        "uav_roi_prompt_adapter_dense_scale_init": args.uav_roi_prompt_adapter_dense_scale_init,
-        "uav_roi_prompt_adapter_use_confidence": args.uav_roi_prompt_adapter_use_confidence,
-        "uav_roi_bev_dim": args.uav_roi_bev_dim,
-        "uav_roi_d_inner": args.uav_roi_d_inner,
-        "uav_roi_num_heads": args.uav_roi_num_heads,
-        "uav_roi_num_points": args.uav_roi_num_points,
-        "uav_roi_max_offset": args.uav_roi_max_offset,
-        "uav_roi_multi_scale": args.uav_roi_multi_scale,
-        "uav_roi_level_match": args.uav_roi_level_match,
-        "uav_roi_num_bev_levels": args.uav_roi_num_bev_levels,
-        "uav_roi_finest_scale": args.uav_roi_finest_scale,
-        "uav_roi_offset_loss_weight": args.uav_roi_offset_loss_weight,
-        "uav_roi_attn_uniform_loss_weight": args.uav_roi_attn_uniform_loss_weight,
-        "uav_roi_dense_scale_init": args.uav_roi_dense_scale_init,
-        "uav_roi_dense_mid_channels": args.uav_roi_dense_mid_channels,
-        "uav_debug_stats": args.uav_debug_stats,
-        "uav_debug_stats_interval": args.uav_debug_stats_interval,
-        "depth_debug_stats": args.depth_debug_stats,
-        "depth_debug_stats_interval": args.depth_debug_stats_interval,
-        "depth_enabled": os.environ.get("DEPTH_ENABLED", ""),
-        "depth_encoder": os.environ.get("DEPTH_ENCODER", ""),
-        "depth_pretrained_path": os.environ.get("DEPTH_PRETRAINED_PATH", ""),
-        "depth_require_pretrained": os.environ.get("DEPTH_REQUIRE_PRETRAINED", ""),
-        "use_drone": args.use_drone,
+        "prompt_debug_stats": args.prompt_debug_stats,
+        "prompt_debug_stats_interval": args.prompt_debug_stats_interval,
         "seed": args.seed,
         "lr": args.lr,
         "batch_size": args.batch_size,
@@ -2112,8 +1899,6 @@ def main():
             "prompt_encoder": args.prompt_encoder_lr_mult,
             "shape_prior": args.shape_prior_lr_mult,
             "p2_boundary_refiner": args.p2_boundary_refiner_lr_mult,
-            "drone": args.drone_lr_mult,
-            "scene_align": args.scene_align_lr_mult,
         },
         "image_size": list(args.image_size),
         "mask_head_config": dict(cfg.model.roi_head.mask_head)
@@ -2416,44 +2201,12 @@ def main():
             global_step = epoch * max(1, train_batches_limit) + batch_idx + 1
             if (
                 is_main
-                and (
-                    (
-                        args.uav_debug_stats
-                        and args.uav_debug_stats_interval > 0
-                        and global_step % args.uav_debug_stats_interval == 0
-                    )
-                    or (
-                        args.prompt_debug_stats
-                        and args.prompt_debug_stats_interval > 0
-                        and global_step % args.prompt_debug_stats_interval == 0
-                    )
-                    or (
-                        args.depth_debug_stats
-                        and args.depth_debug_stats_interval > 0
-                        and global_step % args.depth_debug_stats_interval == 0
-                    )
-                )
+                and args.prompt_debug_stats
+                and args.prompt_debug_stats_interval > 0
+                and global_step % args.prompt_debug_stats_interval == 0
             ):
-                enabled_prefixes = set()
-                if (
-                    args.uav_debug_stats
-                    and args.uav_debug_stats_interval > 0
-                    and global_step % args.uav_debug_stats_interval == 0
-                ):
-                    enabled_prefixes.update({"A", "ROI", "B", "C", "D"})
-                if (
-                    args.prompt_debug_stats
-                    and args.prompt_debug_stats_interval > 0
-                    and global_step % args.prompt_debug_stats_interval == 0
-                ):
-                    enabled_prefixes.update({"SP", "COARSE", "JITTER", "GATE", "DENSE", "CONTEXT", "BOX"})
-                if (
-                    args.depth_debug_stats
-                    and args.depth_debug_stats_interval > 0
-                    and global_step % args.depth_debug_stats_interval == 0
-                ):
-                    enabled_prefixes.add("DEPTH")
-                _log_uav_debug_stats(model, epoch, global_step, enabled_prefixes)
+                enabled_prefixes = {"SP", "COARSE", "JITTER", "GATE", "DENSE", "CONTEXT", "BOX"}
+                _log_prompt_debug_stats(model, epoch, global_step, enabled_prefixes)
             scaler.scale(loss_for_backward).backward()
 
             # Step optimizer every grad_accum batches or at the last batch
