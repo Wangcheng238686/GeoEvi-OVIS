@@ -777,6 +777,14 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 
 ## 8. 文档同步记录
 
+- 2026-09-01：C 级重构第 2 项完成——`prompt_sparse_mode` 由四模式收敛为
+  `point`/`shape_point` 两种（`box`、`point_box` 在 B 级清理后已无任何
+  wrapper/config 使用）。构造器拒绝未知模式；`explicit_prompt_mode` 合法
+  集合收缩为 `points_box`/`points_box_dense`；forward 中 box 专用 PE 调用
+  分支、`box_embs` 管线与四路 sparse 组装塌缩为两路。以 `a3d7bb0` 为基准
+  复跑 7 架构等价探针：architecture_id、state_dict 键/形状、可训练参数
+  集合、前向输出全部逐位一致（7/7 PASS），commit `4456f2c`。
+
 - 2026-09-01：组织结构调整（低风险三项）。`train/train_rsprompter_fusion.py`
   更名为 `train/train.py`（训练器文件名去掉旧融合项目残留，runner/契约校验/
   uecoco wrapper/文档同步更新）；WHU 之外的数据集实验线归拢到
