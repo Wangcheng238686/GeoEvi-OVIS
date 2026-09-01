@@ -8,30 +8,11 @@
 3. 从同型号 SAM2 checkpoint 严格加载并冻结的原生 PromptEncoder；
 4. PromptEncoder 之前、只修正局部边界的 P2BoundaryRefiner（实验性 C5-v2）。
 
-主代码位于 `portable_sam2_explicit_coarse/`。IIMR、多轮 mask memory 和
-topology-token 路线已从主代码删除。`legacy_baseline/` 是旧项目复现包的冻结
-副本，不参与新主线 import，只用于验证和复现历史基线。
+主代码位于 `portable_sam2_explicit_coarse/`。IIMR、多轮 mask memory、
+topology-token 路线和卫星/UAV 双流分支已从主代码删除。
 
 完整的模型接线、目录结构、逐文件用途和参数说明见
 [`PROJECT_ARCHITECTURE.md`](PROJECT_ARCHITECTURE.md)。
-
-## 历史基线复现
-
-```bash
-bash scripts/verify_legacy_baseline.sh
-bash scripts/reproduce_legacy_segm.sh
-```
-
-冻结快照对应来源 commit：
-
-`eee751738d0c4e9f5fa7fdc017cec56bafe11584`
-
-已记录的 WHU validation 指标：
-
-- `baseline_noms`: bbox mAP 0.788，segm mAP 0.748；
-- `bs1a2_fixddp`: bbox mAP 0.767，segm mAP 0.754。
-
-复现脚本、环境、配置、源码和 SHA256 清单均保存在 `legacy_baseline/`。
 
 ## 新主线
 

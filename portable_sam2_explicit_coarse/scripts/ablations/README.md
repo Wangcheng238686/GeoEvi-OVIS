@@ -72,9 +72,9 @@ SHAPE_CONTEXT_FUSION=gated_spatial_film \
 The default run tag includes the resolved fusion name, so this command writes
 to a `*_gated_spatial_film` experiment rather than mixing with `*_roi_only`.
 
-B0 is the new-mainline bridge control. The byte-exact historical baseline remains
-under `../../legacy_baseline` at repository level and is launched with
-`../../../scripts/reproduce_legacy_segm.sh`.
+B0 is the new-mainline bridge control. The byte-exact historical baseline
+package was removed from this repository on 2026-09-01; it lives only in the
+old project's own history.
 
 B0/B1/M0/M1 reproduce the historical MLP bridge's image positional embedding: the
 64×64 parameter is zero-initialized and trainable, then interpolated to the

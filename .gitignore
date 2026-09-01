@@ -8,13 +8,15 @@
 .vscode/
 .idea/
 
-# LaTeX build artifacts (the main.tex paper draft is not tracked).
-/main.aux
-/main.fdb_latexmk
-/main.fls
-/main.log
-/main.out
-/main.pdf
-/main.synctex.gz
+# Training/evaluation logs and run artifacts stay out of version control.
+portable_sam2_explicit_coarse/logs/
+**/.ua/
+
+# LaTeX build artifacts.
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.out
 
 portable_sam2_explicit_coarse/configs/environment.local.sh

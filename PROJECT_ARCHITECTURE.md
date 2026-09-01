@@ -12,18 +12,17 @@
 /home/wangcheng2021/project/portable_sam2_explicit_coarse_new
 ```
 
-项目包含三个明确隔离的区域：
+项目包含两个明确隔离的区域：
 
 - `portable_sam2_explicit_coarse/`：唯一的新主线实现和实验入口；
-- `sam2/`：随项目固定的官方 SAM2 运行时源码，新主线通过 `SAM2_REPO` 使用；
-- `legacy_baseline/`：旧项目冻结复现包，只用于历史基线复现，不被新主线 import。
+- `sam2/`：随项目固定的官方 SAM2 运行时源码，新主线通过 `SAM2_REPO` 使用。
 
 新主线只保留已经选定的 PAFPN、显式 coarse mask、原生 PromptEncoder 加载，
 以及实验性的 Gaussian dense 表示和 P2BoundaryRefiner。旧 DenseBR 已从当前代码删除；IIMR、多轮 mask
 memory、topology token、SABL refined-box 依赖、卫星/UAV 双流数据与分支等不属于
-新主线。
-
-历史基线与新主线必须使用不同的输出目录，不能覆盖历史 checkpoint。
+新主线。旧项目（`portable_sam2_fusion_new`）的冻结基线复现包
+`legacy_baseline/` 及其复现脚本已于 2026-09-01 移除，历史基线数值以旧项目
+仓库和实验记录为准，不在本项目内复现。
 
 ## 2. 整体架构
 
@@ -179,11 +178,7 @@ final-mask 坐标契约，M0→C1、M1→C2 才是在相同 full-image 契约下
 | `C5_V2_METHOD.md` | C5-v2 论文方法设计文档；整理完整架构、张量数据流、ECPG/P2-BRR、损失与制图说明。 |
 | `MIGRATION_MANIFEST.md` | 记录两个参考项目、选取内容、排除内容和复现规则。 |
 | `.gitignore` | 顶层 Git 忽略规则。 |
-| `scripts/verify_legacy_baseline.sh` | 校验冻结基线文件和 SHA256 完整性。 |
-| `scripts/reproduce_legacy_bbox.sh` | 进入冻结包并复现历史 bbox 最强基线。 |
-| `scripts/reproduce_legacy_segm.sh` | 进入冻结包并复现历史 segm 最强基线。 |
 | `sam2/` | 固定的 SAM2 Python 包及 Hydra 配置；除明确升级 SAM2 外不要修改。 |
-| `legacy_baseline/` | 冻结旧项目和完整性清单；不承载新功能。 |
 | `portable_sam2_explicit_coarse/` | 新主线源码、配置、训练和消融入口。 |
 
 ## 4. 新主线逐文件说明
@@ -658,19 +653,11 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --inspect-only
 bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cpu
 ```
 
-复现冻结历史基线：
-
-```bash
-cd /home/wangcheng2021/project/portable_sam2_explicit_coarse_new
-bash scripts/verify_legacy_baseline.sh
-bash scripts/reproduce_legacy_segm.sh
-```
-
 ## 6. 主要环境变量
 
 下表中的机器相关默认值集中定义于 `configs/environment.sh`。消融、主线训练、推理、
-组件 smoke、串行监视器以及顶层 legacy reproduction 代理均通过
-`scripts/load_environment.sh` 加载；冻结包内部脚本和 vendored SAM2 不被修改。
+组件 smoke 和串行监视器均通过
+`scripts/load_environment.sh` 加载；vendored SAM2 不被修改。
 
 | 变量 | 默认值/含义 |
 |---|---|
@@ -679,7 +666,7 @@ bash scripts/reproduce_legacy_segm.sh
 | `SAM2_REPO` | 项目内 `../sam2`。 |
 | `SAM2_CKPT` | `/data/wangcheng/pretrained-models/sam2/sam2_hiera_base_plus.pt`。 |
 | `WHU1024_DATA_ROOT` | `/data/wangcheng/dataset/WHU`。 |
-| `PORTABLE_SAM2_CHECKPOINT_ROOT` | 所有新主线与 legacy reproduction checkpoint 的公共根目录。 |
+| `PORTABLE_SAM2_CHECKPOINT_ROOT` | 所有新主线 checkpoint 的公共根目录。 |
 | `PORTABLE_SAM2_LOG_ROOT` | 训练和监视器日志根目录；默认 `<新主线>/logs`。 |
 | `PORTABLE_SAM2_TMP_ROOT` | smoke sentinel、监视器锁等临时文件根目录。 |
 | `MPLCONFIGDIR` | matplotlib 可写配置目录；默认位于 `PORTABLE_SAM2_TMP_ROOT`。 |
@@ -776,6 +763,16 @@ bash scripts/reproduce_legacy_segm.sh
 处理本项目的新增或改动时，它负责默认执行上述同步流程。
 
 ## 8. 文档同步记录
+
+- 2026-09-01：清理与旧项目强相关的非代码资产，仓库收敛为新项目基线。删除
+  根目录论文稿（`main.tex`/`main2.*`/`main5.*` 及全部 LaTeX 编译产物、
+  `paper-reviews/`、`采样示例图.pdf`/`双流模型.pdf`/`单流模型.pdf`）、
+  `legacy_baseline/` 冻结复现包与顶层 `verify/reproduce_legacy_*.sh` 三个
+  复现脚本、`.ua` 工具垃圾目录，以及全部被 Git 跟踪的
+  `portable_sam2_explicit_coarse/logs/` 实验日志与评估归档（约 130 个文件）。
+  `.gitignore` 恢复忽略 `logs/`、`.ua/` 与 LaTeX 中间产物。README、本文件与
+  `MIGRATION_MANIFEST.md` 移除对应引用；历史基线数值以旧项目自身历史为准，
+  不在本仓库复现。iSAID / ue_coco 数据管线代码按决定保留。
 
 - 2026-09-01：删除卫星/UAV 双流残留，项目收敛为纯单流。删除
   `data/satellite_drone_dataset.py`；`data/loader.py` 移除 drone 分支与

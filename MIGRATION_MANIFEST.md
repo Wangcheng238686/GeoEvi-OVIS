@@ -4,8 +4,11 @@
 
 - Source: `portable_sam2_fusion_new`
 - Commit: `eee751738d0c4e9f5fa7fdc017cec56bafe11584`
-- Frozen copy: `legacy_baseline/portable_sam2_fusion_new`
-- Integrity list: `legacy_baseline/SOURCE_SHA256SUMS`
+- Frozen copy: `legacy_baseline/portable_sam2_fusion_new` (removed from this
+  repository on 2026-09-01; the frozen package lives only in the old project
+  history)
+- Integrity list: `legacy_baseline/SOURCE_SHA256SUMS` (removed together with
+  the frozen copy)
 
 The frozen copy is intentionally not imported by the new implementation.
 
@@ -36,7 +39,9 @@ Explicitly excluded:
 
 ## Reproducibility rule
 
-Historical claims are reproduced only from `legacy_baseline`. New-mainline
+The frozen baseline package is no longer part of this repository; historical
+claims about the old project are reproduced from the old project's own
+history, not from here. New-mainline
 experiments use distinct configuration and checkpoint directories and must not
 overwrite historical checkpoints. Every new run should record:
 
