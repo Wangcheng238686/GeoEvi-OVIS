@@ -209,7 +209,7 @@ rsprompter_anchor_satS_v11_sam2_large_full.py
 | 文件 | 用途 |
 |---|---|
 | `__init__.py` | 注册 MMDetection 模型组件；`RSPROMPTER_LIGHT_IMPORT=1` 用于轻量张量测试。 |
-| `models.py` | detector、RoI head、bbox head 和旧 SAM/RSPrompter 兼容组件；新主线 proposal prompt 接线也在这里。 |
+| `models.py` | detector（`RSPrompterAnchor`）与 RoI head（`RSPrompterAnchorRoIPromptHead`）；旧 SAM1/RSPrompter 兼容组件与死掉的 `_shape_prior_aux_loss` 已于 2026-09-01 删除。 |
 | `models_sam2.py` | SAM2 主实现：vision encoder、基线 aggregator、PAFPN、MaskDecoder wrapper、MLP/coarse 双路线 MaskHead。 |
 | `shape_prior.py` | `ShapePriorInjector`、小型 coarse mask decoder、RoI box encoding 和 `ShapePointMiner`。 |
 | `coarse_mask_loss.py` | coarse mask 的 BCE、Dice、boundary、distance 组合损失及权重调度。 |
@@ -233,9 +233,8 @@ rsprompter_anchor_satS_v11_sam2_large_full.py
 | 文件 | 用途 |
 |---|---|
 | `__init__.py` | 导出 `create_train_loader` 并注册 `AdaptiveResize`。 |
-| `loader.py` | 统一构造 train/validation DataLoader；实现独立、确定性的 train/val 子集抽样。仅支持单流 `whu_coco` 与旧 LabelMe 单流数据；卫星/UAV 双流分支已删除。 |
+| `loader.py` | 统一构造 train/validation/test DataLoader；实现独立、确定性的 train/val 子集抽样。仅支持单流 `whu_coco` 数据，其他 `dataset_format` 直接报错。 |
 | `whu_instance_dataset.py` | 当前 WHU COCO 实例分割数据集实现。 |
-| `satellite_dataset.py` | 旧 LabelMe 卫星数据兼容数据集。 |
 
 WHU 默认路径：
 
@@ -450,10 +449,8 @@ checkpoint。训练脚本、推理脚本都不得根据 checkpoint 文件名反�
 
 | 文件 | 用途 |
 |---|---|
-| `tools/mask_to_coco_whu512.py` | 将 WHU 二值 mask 转为 COCO polygon 标注；属于数据准备工具，不是训练必需步骤。 |
 | `utils/__init__.py` | 通用工具包标记。 |
 | `utils/coco_eval_utils.py` | 构造 COCO GT/DT 并执行 bbox/segm COCOeval；支持 bbox score 和 mask score 两种评估分数。 |
-| `utils/transforms.py` | `AdaptiveResize` MMDetection transform。 |
 | `.gitignore` | 忽略本地缓存、运行产物等。 |
 
 ### 4.8 运行产物
@@ -763,6 +760,20 @@ bash scripts/infer_whu_checkpoint.sh /path/to/model.pth --build-only --device cp
 处理本项目的新增或改动时，它负责默认执行上述同步流程。
 
 ## 8. 文档同步记录
+
+- 2026-09-01：A 级孤儿代码清理（无行为变化）。删除 `rsprompter/models.py` 中
+  无任何 config 引用的 SAM1 遗留链（`RSPrompterAnchorMaskHead`、`RSSam*` 四件套、
+  `RSFPN`/`RSFeatureAggregator`/`RSSimpleFPN`、`AP75DualLossShared2FCBBoxHead`、
+  `LN2d`）与已被 `CoarseMaskLoss` 取代的 `_shape_prior_aux_loss`/`_shape_prior_targets`
+  （文件 1674→约 920 行）；删除坏掉的 `scripts/smoke_isaid_15cls.sh` +
+  `configs/isaid_baseplus_explicit_coarse.py`（引用不存在的 `--use-isaid-coco`）、
+  `data/satellite_dataset.py` 与 loader 的 labelme 分支（`dataset_format` 现仅支持
+  `whu_coco`，默认值改为 `whu_coco`）、`utils/transforms.py`、`tools/mask_to_coco_whu512.py`、
+  `_sam2_registry.sha256_of_file`、根 config 的 512 时代 dataset/dataloader 死段、
+  runner 与 uecoco wrapper 中仅记录不消费的 4 个 env 导出（`PROMPT_GENERATOR_MODE`
+  等）及其 trainer 快照字段、paper fast wrapper 的死导出 `FINAL_MASK_TARGET_SIZE`、
+  机器绑定的 `eval_test_raw.sh`/`eval_test_winner.sh`。`infer_from_checkpoint.py`
+  与 `test_only_from_ckpt.sh` 中同名键保留，作为旧 checkpoint 只读兼容层。
 
 - 2026-09-01：清理与旧项目强相关的非代码资产，仓库收敛为新项目基线。删除
   根目录论文稿（`main.tex`/`main2.*`/`main5.*` 及全部 LaTeX 编译产物、

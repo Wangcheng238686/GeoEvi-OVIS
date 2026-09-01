@@ -37,10 +37,6 @@ export SAM2_MODEL_SIZE=base_plus
 # roi_local contract used by the WHU R1-C4-RD-roi_local baseline.
 export FINAL_MASK_COORDINATE_MODE="roi_local"
 # coarse route model config (architecture-only; data comes from CLI below).
-export PROMPT_GENERATOR_MODE="explicit_mask"
-export PROMPT_SPARSE_MODE="shape_point"
-export PROMPT_ENCODER_ENABLED=1
-export SHAPE_PRIOR_ENABLED=1
 export SHAPE_CONTEXT_FUSION="roi_only"
 export SHAPE_POINT_ADAPTIVE_VALIDITY=1
 export SHAPE_LOSS_SCHEDULE_MODE="fixed"

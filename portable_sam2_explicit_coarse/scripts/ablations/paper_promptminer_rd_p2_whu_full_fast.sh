@@ -5,8 +5,6 @@
 # wall-clock optimization agreed after the AMP subset A/B check (18 epochs,
 # mean |dSegM/mAP| = 0.021, within run-to-run noise):
 #   - AMP=1 (fp16 autocast; ampcheck log 20260824_114159)
-#   - FINAL_MASK_TARGET_SIZE=256 (per-ROI supervision at the decoder's native
-#     grid; frees the memory that unlocks BATCH_SIZE=2)
 #   - BATCH_SIZE=1 x GRAD_ACCUM_STEPS=2 on 4 GPUs (effective global batch
 #     stays 8, matching the paper protocol; batch=1 halves the per-forward
 #     SAM2 decoder ROI count (128 -> 64): the batch-2 profile OOMs on this
@@ -66,7 +64,6 @@ export VAL_SUBSET_RATIO="${VAL_SUBSET_RATIO:-1.0}"
 # fp32 training's 28.3 GB), and TEST_MAX_PER_IMG=100 caps the model side too;
 # batch=2 keeps most of the throughput gain without betting on margins.
 export VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-2}"
-export FINAL_MASK_TARGET_SIZE="${FINAL_MASK_TARGET_SIZE:-256}"
 export CUDNN_BENCHMARK="${CUDNN_BENCHMARK:-1}"
 export TEST_MAX_PER_IMG="${TEST_MAX_PER_IMG:-100}"
 export EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-20}"

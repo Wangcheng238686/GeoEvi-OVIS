@@ -14,7 +14,6 @@
     2. 本文件 _DEFAULT_MODEL_SIZE（默认 "large"，保持历史复现行为）
 """
 import os
-import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -102,17 +101,3 @@ def build_sam2_cfg(
         yaml=yaml_,
         neck_in_channels=_neck_in_channels(size),
     )
-
-
-def sha256_of_file(path: str, chunk: int = 1 << 20) -> str:
-    """计算 checkpoint 的 SHA256，供启动 manifest 用。文件不存在返回 '<missing>'。"""
-    if not os.path.exists(path):
-        return "<missing>"
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            b = f.read(chunk)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()

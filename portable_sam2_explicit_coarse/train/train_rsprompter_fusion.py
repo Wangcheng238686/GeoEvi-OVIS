@@ -1966,13 +1966,7 @@ def main():
         },
         "train_subset_ratio": float(train_subset_ratio),
         "val_subset_ratio": float(val_subset_ratio),
-        "prompt_generator_mode": os.environ.get(
-            "PROMPT_GENERATOR_MODE", "explicit_mask"
-        ),
         "explicit_prompt_mode": os.environ.get("EXPLICIT_PROMPT_MODE", ""),
-        "prompt_sparse_mode": os.environ.get("PROMPT_SPARSE_MODE", ""),
-        "prompt_encoder_enabled": os.environ.get("PROMPT_ENCODER_ENABLED", ""),
-        "shape_prior_enabled": os.environ.get("SHAPE_PRIOR_ENABLED", ""),
         "explicit_use_box_prompt": os.environ.get("EXPLICIT_USE_BOX_PROMPT", ""),
         "use_shape_dense": os.environ.get("USE_SHAPE_DENSE", ""),
         "prompt_mode": os.environ.get("PROMPT_MODE", ""),

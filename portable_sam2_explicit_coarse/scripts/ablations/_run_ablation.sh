@@ -65,10 +65,6 @@ case "${PROMPT_ROUTE}" in
     fi
     CONFIG_PATH="configs/whu1024_baseplus_clean.py"
     EXPECTED_EXPLICIT_MODE="none"
-    export PROMPT_GENERATOR_MODE="rsprompter_mlp"
-    export PROMPT_SPARSE_MODE="point"
-    export PROMPT_ENCODER_ENABLED=0
-    export SHAPE_PRIOR_ENABLED=0
     export EXPLICIT_PROMPT_MODE="none"
     export P2_BOUNDARY_REFINER_ENABLED=0
     FINAL_MASK_COORDINATE_MODE="${FINAL_MASK_COORDINATE_MODE:-roi_local}"
@@ -92,10 +88,6 @@ case "${PROMPT_ROUTE}" in
       *) echo "invalid EXPLICIT_PROMPT_MODE=${EXPLICIT_PROMPT_MODE}" >&2; exit 2 ;;
     esac
     EXPECTED_EXPLICIT_MODE="${EXPLICIT_PROMPT_MODE}"
-    export PROMPT_GENERATOR_MODE="explicit_mask"
-    export PROMPT_SPARSE_MODE="shape_point"
-    export PROMPT_ENCODER_ENABLED=1
-    export SHAPE_PRIOR_ENABLED=1
     if [[ "${ROI_SAM_ENABLED}" == "1" ]]; then
       if [[ "${EXPLICIT_PROMPT_MODE}" != "points" ]]; then
         echo "ROI-SAM is a strict points-only C2 variant" >&2
@@ -471,10 +463,6 @@ echo "run_tag=${RUN_TAG}"
 echo "run_suffix=${RUN_SUFFIX}"
 echo "neck_type=${NECK_TYPE}"
 echo "prompt_route=${PROMPT_ROUTE}"
-echo "prompt_generator_mode=${PROMPT_GENERATOR_MODE}"
-echo "prompt_sparse_mode=${PROMPT_SPARSE_MODE}"
-echo "prompt_encoder_enabled=${PROMPT_ENCODER_ENABLED}"
-echo "shape_prior_enabled=${SHAPE_PRIOR_ENABLED}"
 echo "explicit_prompt_mode=${EXPECTED_EXPLICIT_MODE}"
 echo "shape_dense_transform=${SHAPE_DENSE_TRANSFORM}"
 echo "shape_dense_detach=${SHAPE_DENSE_DETACH}"
