@@ -1,11 +1,20 @@
 # inference/ — SAM3 推理 harness
 
-规划（implementation-v2.md S2.x，P0 启用）：
+约定：全局 bf16 autocast（官方用法，见 docs/sam3-api-notes.md §0）；
+`set_image` 传 PIL 对象；阈值/口径以 `notes/reports/p0-gate-criteria.md`
+预登记为准。
 
-- `zeroshot_text.py`：每图 × 每类短语 → SAM3 text-only 概念分割 → 候选
-  （mask + 分数）→ S1.4 管线评测；记录逐类、逐图候选统计；
-- 大幅图三种推理模式对比（整图 resize / 固定网格分块 / 重叠滑窗，E2）；
-- exemplar 组合 prompt（P3 启用）。
+| 脚本 | 用途 | 阶段 |
+|---|---|---|
+| `demo_text.py` | 官方 demo 复跑（S1.1 出口判据） | P-1 ✅ |
+| `validate_api.py` | S1.2 四项 API 面验证（tokens/contract/exemplar/multi） | P-1 ✅ |
+| `zeroshot_text.py` | 每图×每类 text-only 候选 → JSONL RLE；断点续跑 + 逐图 OOM 韧性；产出逐类/逐图候选统计 | P0 运行中 |
+| `inference_modes.py` | 整图/网格分块/重叠滑窗三模式对比（E2：显存、时延、指标差） | P0 待跑 |
+| `failure_mining.py` | 四类失败（漏检/误检/mask质量/重复）挖掘 + 可视化导出 | P0 待跑 |
 
-P-1 阶段本目录只放官方 demo 复跑脚本（S1.1 完成判据：单图 text prompt 在本机
-GPU 跑通）。
+## P0 运行口径（已预登记，不回改）
+
+- 候选池 `score ≥ 0.05`（processor confidence_threshold），类名逐字取注册表；
+- 输出 `$SAM3_OVIS_LOG_ROOT/zeroshot/<DATASET>/predictions.jsonl` +
+  `run_meta.json`（逐类/逐图候选数、耗时分解、OOM 记录）；
+- gate 汇总：`eval/run_gate_eval.py --datasets NWPU SOTA FAST`。
