@@ -1127,3 +1127,12 @@ bash scripts/inference/infer_whu_checkpoint.sh /path/to/model.pth --build-only -
 - 2026-07-28：建立项目架构、逐文件用途、运行入口和文档同步规则；覆盖当前
   PAFPN、MLP/coarse 双路线、PromptEncoder；当时的 DenseBR 已在 2026-07-29
   被 P2BoundaryRefiner 严格对照替代。
+
+## sam3_ovis 主线（design-v2）指针
+
+2026-09-02 起，仓库根新增 `sam3_ovis/` 主线包（SAM3 开放词汇遥感实例分割，
+对应 `notes/design-v2.md` / `notes/implementation-v2.md`），与本文描述的
+C5-v2 线物理隔离：本文其余内容不覆盖 sam3_ovis 主线，两边互不修改对方文件。
+vendored 官方 repo 在仓库根 `sam3/`（与 `sam2/` 平级，env 变量 `SAM3_REPO`）。
+该线的目录结构、环境契约（`SAM3_REPO` / `SAM3_CKPT` 等）与阶段进度见
+[`sam3_ovis/README.md`](sam3_ovis/README.md)。

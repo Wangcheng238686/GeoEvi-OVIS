@@ -23,6 +23,7 @@ SAM2 可消费的提示，由可训练的 SAM2 MaskDecoder 输出最终实例掩
 | `geoevi_ovis/contrib/` | WHU 之外的数据集实验线 | [README](geoevi_ovis/contrib/README.md) |
 | `geoevi_ovis/utils/` | 共享 COCO 评估工具 | [README](geoevi_ovis/utils/README.md) |
 | `geoevi_ovis/docs/` | 模块设计文档 | [README](geoevi_ovis/docs/README.md) |
+| `sam3_ovis/` | SAM3 开放词汇遥感实例分割主线（design-v2，P-1 进行中；vendored 官方 repo 在 `sam3/`） | [README](sam3_ovis/README.md) |
 
 项目级文档：
 
