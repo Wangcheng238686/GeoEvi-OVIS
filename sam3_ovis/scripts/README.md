@@ -11,12 +11,20 @@
 
 ```bash
 conda create -y -p /data/wangcheng/envs/sam3 python=3.12
-/data/wangcheng/envs/sam3/bin/pip install torch==2.10.0 torchvision \
-    --index-url https://download.pytorch.org/whl/cu128
-cd "$SAM3_REPO" && /data/wangcheng/envs/sam3/bin/pip install -e .
+# torch 全家桶：阿里云 wheel 被代理拖垮/单连接中断，最终采用
+# 本地 wheel 并行下载 + 零网络安装（wheel 存 /data/wangcheng/tmp_wheels/）：
+#   pip install --no-index --no-deps torch-2.10.0+cu128-*.whl nvidia/*.whl ...
+pip install -i https://mirrors.aliyun.com/pypi/simple/ \
+    "numpy>=1.26,<2" timm tqdm ftfy==6.1.1 regex iopath huggingface_hub \
+    pycocotools opencv-python-headless matplotlib pillow einops psutil \
+    "setuptools<81"   # >=81 移除 pkg_resources，官方 model_builder 仍依赖
+cd "$SAM3_REPO" && pip install -e .
 ```
 
 官方要求：python ≥ 3.12、torch ≥ 2.7、CUDA ≥ 12.6（本机驱动 CUDA 12.8，满足）。
+注意本机 shell 默认走 `127.0.0.1:7890` 代理：国内源（ModelScope / 阿里云）须
+`env -u http_proxy … no_proxy='*'` 直连，否则限速至 ~0.3–2 MB/s；HF 代理时通
+时断，数据集下载用 hf-mirror.com。
 
 ## 权重（S1.1）
 

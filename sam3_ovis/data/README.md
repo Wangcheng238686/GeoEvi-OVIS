@@ -2,8 +2,9 @@
 
 数据根：`$SAM3_OVIS_DATA_ROOT`（本机 `/data/wangcheng/dataset/SCORE`）。
 来源协议：**split 以 SCORE HF `HuangShiqi008/SCORE` 为准**（协议引用注明来源，
-E4）；zip 落 `zips/`，解压到 `extract/`，各数据集为 COCO-instance 子树
-`<DATASET>/val/instances_val.json (+ images/)`。
+E4）；原始 zip 落 `<数据根>/zips/`，各数据集解压为 `<数据根>/<DATASET>/` 下的
+COCO-instance 子树 `val/instances_val.json (+ images/)`（训练集为
+`train/instances_train.json`）。
 
 ## 数据集注册表（S1.3，2026-09-02 核实）
 
