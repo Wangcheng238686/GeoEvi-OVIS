@@ -208,6 +208,7 @@ def compute_diagnostics(
             "precision_proxy@%.2f" % iou_thr: precision,
             "conditional_iou": cond_iou,
             "n_gt": st["n_gt"], "n_dt": st["n_dt"], "tp": st["tp"],
+            "recall_hits": st["recall_hits"],
         }
         if st["n_gt"]:
             recall_c.append(recall)
