@@ -102,6 +102,7 @@ def main():
         checkpoint_path=os.environ["SAM3_CKPT"], load_from_HF=False)
     processor = Sam3Processor(model, confidence_threshold=THRESHOLD)
 
+    oom_path = out_dir / "oom_images.jsonl"
     stats = {"set_image_s": 0.0, "grounding_s": 0.0, "rle_s": 0.0,
              "n_pairs": 0, "n_candidates": 0,
              "per_class_candidates": defaultdict(int),
@@ -109,46 +110,63 @@ def main():
     t_start = time.time()
     n_new_imgs = 0
 
+    def process_image(fout, img_id, info):
+        """One image -> candidate lines in fout. Raises CUDA OOM upward after
+        one empty_cache retry; the caller records and continues."""
+        image = Image.open(root / spec.images_dir / info["file_name"]) \
+            .convert("RGB")
+        t0 = time.time()
+        state = processor.set_image(image)
+        t1 = time.time()
+        stats["set_image_s"] += t1 - t0
+        img_cand = 0
+        for cat_id in cat_ids:
+            state = processor.set_text_prompt(
+                state=state, prompt=cat_names[cat_id])
+            scores = state["scores"]
+            n = int(scores.shape[0]) if scores is not None else 0
+            stats["n_pairs"] += 1
+            if n == 0:
+                continue
+            stats["n_candidates"] += n
+            stats["per_class_candidates"][cat_names[cat_id]] += n
+            img_cand += n
+            t2 = time.time()
+            stats["grounding_s"] += t2 - t1
+            masks = state["masks"]
+            for j in range(n):
+                t3 = time.time()
+                rle = rle_encode(masks[j])
+                stats["rle_s"] += time.time() - t3
+                fout.write(json.dumps({
+                    "image_id": img_id,
+                    "category_id": int(cat_id),
+                    "category_name": cat_names[cat_id],
+                    "score": round(float(scores[j]), 6),
+                    "segmentation": rle,
+                }) + "\n")
+            t1 = time.time()
+        return img_cand
+
     with open(pred_path, "a") as fout:
         for k, img_id in enumerate(img_ids):
             if img_id in done_imgs:
                 continue
             info = gt.loadImgs(img_id)[0]
-            img_path = root / spec.images_dir / info["file_name"]
-            image = Image.open(img_path).convert("RGB")
-
-            t0 = time.time()
-            state = processor.set_image(image)
-            t1 = time.time()
-            stats["set_image_s"] += t1 - t0
-
-            img_cand = 0
-            for cat_id in cat_ids:
-                state = processor.set_text_prompt(
-                    state=state, prompt=cat_names[cat_id])
-                scores = state["scores"]
-                n = int(scores.shape[0]) if scores is not None else 0
-                stats["n_pairs"] += 1
-                if n == 0:
+            try:
+                img_cand = process_image(fout, img_id, info)
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                try:
+                    img_cand = process_image(fout, img_id, info)
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache()
+                    with open(oom_path, "a") as fo:
+                        fo.write(json.dumps({"image_id": img_id}) + "\n")
+                    print(f"  OOM x2 on img {img_id} -> recorded, "
+                          "resumable later")
+                    n_new_imgs += 1
                     continue
-                stats["n_candidates"] += n
-                stats["per_class_candidates"][cat_names[cat_id]] += n
-                img_cand += n
-                t2 = time.time()
-                stats["grounding_s"] += t2 - t1
-                masks = state["masks"]
-                for j in range(n):
-                    t3 = time.time()
-                    rle = rle_encode(masks[j])
-                    stats["rle_s"] += time.time() - t3
-                    fout.write(json.dumps({
-                        "image_id": img_id,
-                        "category_id": int(cat_id),
-                        "category_name": cat_names[cat_id],
-                        "score": round(float(scores[j]), 6),
-                        "segmentation": rle,
-                    }) + "\n")
-                t1 = time.time()
             stats["per_image_candidates"][str(img_id)] = img_cand
             n_new_imgs += 1
             if n_new_imgs % 20 == 0:
@@ -159,6 +177,7 @@ def main():
                       f"{stats['n_candidates']} cands, "
                       f"{el / max(n_new_imgs, 1):.1f}s/img, "
                       f"ETA {el / max(done_frac, 1e-9) - el:.0f}s")
+                torch.cuda.empty_cache()
 
     total_s = time.time() - t_start   # with-block exit has flushed & closed
     meta = {
