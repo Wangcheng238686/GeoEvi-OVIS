@@ -1,0 +1,103 @@
+Agricultural Land, Cropland
+Agriculture Land
+Background/Clutter
+Bareland, Barren, Dirt
+Barren
+Building
+Buildings, Roof, House
+CHN6_CUG
+Car
+Clutter/background
+DeepGlobe
+Developed Space
+Forest
+Human
+Impervious surfaces
+Inria
+Low vegetation
+Massachusetts
+Pasture, Grass, Lawn
+Road
+Roads
+SpaceNet
+Tree
+Tree, Forest
+Vegetation
+Vehicle
+WBS_SI_val
+WHU_BD
+WHU_SAT
+Water
+Water, River
+agricultural land
+agriculture land
+airplane
+airport
+all
+bare soil
+bareland
+baseball diamond
+baseball field
+basketball court
+bridge
+brushwood
+building
+buildings
+cars
+chaparral
+chimney
+coniferous
+container crane
+court
+dam
+deciduous
+developed space
+dock
+expressway service area
+expressway toll station
+facade, wall
+field
+golf field
+grass
+ground track field
+harbor
+helicopter
+helipad
+herbaceous vegetation
+impervious surface
+intersection
+large vehicle
+mobile home
+other, Background
+overpass
+pavement
+pervious surface
+plane
+plowed land
+rangeland
+road
+roof
+roundabout
+sand
+sea
+ship
+small vehicle
+soccer ball field
+stadium
+storage tank
+swimming pool
+tanks
+tennis court
+test
+train
+train station
+tree
+trees
+val
+vegetation
+vehicle
+vehicle, car
+vineyard
+water
+windmill
+xBD

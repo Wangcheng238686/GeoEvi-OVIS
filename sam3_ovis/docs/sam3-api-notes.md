@@ -57,9 +57,12 @@
   `expressway-toll-station`、`soccer-ball-field`、`ground-track-field`、
   `ground_track_field`、`Ground_Track_Field`、`Soccer_ball_field`（6）。
 - FAST 细粒度航型号（A220 / Boeing737 / C919 等）为 5 token，完全无压力。
-- 待补：OVRSISBenchV2 128 类名清单本地暂缺（v1 笔记未留 HF 路径，P0 前从其
-  HF 仓库取，脚本已支持 `--classes-file`）。iSAID 已于 2026-09-02 数据落地后
-  补跑：15 类 2–6 token，零截断。
+- OVRSISBenchV2（2026-09-02 补齐）：从官方 [Pi-Seg 仓库](https://github.com/LiBingyu01/Pi-Seg)
+  的 17 个 register_*.py 抽取全部类别名，去重后 **103 个唯一类名**（34 训练 +
+  83 下游并集；论文的"128 类"为跨数据集重复计数），token 数 2–6，**零截断**。
+  清单入库 `data/vocab/ovrsisbench_v2_class_union.txt`，复跑：
+  `tokens --classes-file data/vocab/ovrsisbench_v2_class_union.txt`。
+  **S1.2(c) 至此全部完成：203 个遥感类名实测，无一超 32-token。**
 - 结论：遥感类名是短名词短语，32-token 上限对本任务无实际影响；风险 E3 从
   "低" 降级为 "已解除"（登记后不回改）。
 

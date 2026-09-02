@@ -24,3 +24,6 @@ sam3_ovis/configs/environment.local.sh
 
 # Reference paper PDFs and text extracts stay local; sync out-of-band if needed.
 papers/
+
+# sam3_ovis runtime artifacts (predictions.jsonl can be GBs) stay local.
+sam3_ovis/logs/
