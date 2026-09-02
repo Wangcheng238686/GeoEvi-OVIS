@@ -20,3 +20,6 @@ portable_sam2_explicit_coarse/logs/
 *.out
 
 portable_sam2_explicit_coarse/configs/environment.local.sh
+
+# Reference paper PDFs and text extracts stay local; sync out-of-band if needed.
+papers/
