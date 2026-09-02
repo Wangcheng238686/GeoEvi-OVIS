@@ -74,6 +74,30 @@ DATASETS = OrderedDict([
     ("iSAID", DatasetSpec(
         name="iSAID", role="train", val_json=Path("iSAID/train/instances_train.json"),
         images_dir=Path("iSAID/train/images"),
+        expected_images=28029, expected_annotations=704684,
+        expected_categories=[
+            "Small_Vehicle", "Large_Vehicle", "plane", "storage_tank",
+            "ship", "Swimming_pool", "Harbor", "tennis_court",
+            "Ground_Track_Field", "Soccer_ball_field", "baseball_diamond",
+            "Bridge", "basketball_court", "Roundabout", "Helicopter"],
+        notes={
+            "gt": "human (original iSAID manual instance annotation)",
+            # SCORE paper §4.1 states 18,732 train images; the published HF
+            # json (split authority, E4) carries 28,029. Registered from the
+            # json; discrepancy flagged in p-1-report.md, not resolved here.
+        },
+    )),
+    ("iSAID-val", DatasetSpec(
+        # SCORE Table 1 uses iSAID val as the test set when trained on SIOR
+        name="iSAID-val", role="test",
+        val_json=Path("iSAID/val/instances_val.json"),
+        images_dir=Path("iSAID/val/images"),
+        expected_images=9512, expected_annotations=235531,
+        expected_categories=[
+            "Small_Vehicle", "Large_Vehicle", "plane", "storage_tank",
+            "ship", "Swimming_pool", "Harbor", "tennis_court",
+            "Ground_Track_Field", "Soccer_ball_field", "baseball_diamond",
+            "Bridge", "basketball_court", "Roundabout", "Helicopter"],
         notes={"gt": "human (original iSAID manual instance annotation)"},
     )),
     ("SIOR", DatasetSpec(

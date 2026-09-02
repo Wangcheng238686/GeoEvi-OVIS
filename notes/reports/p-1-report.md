@@ -2,7 +2,8 @@
 
 > 阶段：P-1（implementation-v2.md §1）；报告日期 2026-09-02；
 > 主机 lthpc（RTX 3090 ×4 24G，driver 570.133.20 / CUDA 12.8）。
-> 状态：**S1.1 / S1.2 / S1.4 / S1.5 完成；S1.3 完成测试集+SIOR，iSAID 在途**。
+> 状态：**S1.1 / S1.2 / S1.4 / S1.5 完成；S1.3 五个 SCORE split 全部落地冒烟
+> PASS，仅 NWPU-Refer 补充集待用户百度网盘下载。M0 达成。**
 
 ## 1. 数字表
 
@@ -25,9 +26,13 @@
 | SOTA | 测试 | 874 / 29,247 / 18 | SAM 伪标签 | PASS |
 | FAST | 测试 | 3,207 / 43,258 / 37 | SAM 伪标签 | PASS |
 | SIOR（train） | 训练 | 11,725 / 68,062 / 20 | SAM 伪标签 | PASS |
-| SIOR（val） | 测试（SCORE 协议） | 11,738 / 124,373 / 20 | SAM 伪标签 | PASS |
-| iSAID | 训练 | 论文口径 18,732 / – / 15 | 人工 | **下载中（hf-mirror 并行分段）** |
+| SIOR-val | 测试（协议） | 11,738 / 124,373 / 20 | SAM 伪标签 | PASS |
+| iSAID（train） | 训练 | 28,029 / 704,684 / 15 | 人工 | PASS（zip 全档 CRC 校验通过） |
+| iSAID-val | 测试（协议） | 9,512 / 235,531 / 15 | 人工 | PASS |
 | NWPU-Refer 子集 | 补充 | – | referring 人工 | **待用户百度网盘**（官方仅发网盘，HF 无镜像） |
+
+注：iSAID 训练图数 SCORE 论文称 18,732、其 HF json 实为 28,029；split 以
+HF 发布为准（E4），差异在 gt-provenance.md 双登记、不裁决。
 
 ### 1.3 API 面（S1.2，详见 `sam3_ovis/docs/sam3-api-notes.md`）
 
@@ -35,7 +40,7 @@
 |---|---|
 | (a) 输出契约 | masks [N,1,H,W] bool；boxes [N,4] fp32 xyxy 绝对坐标；scores [N] bf16 = sigmoid(logit)×sigmoid(presence)；`masks_logits` 实为 sigmoid 后概率（命名陷阱） |
 | (b) exemplar | add_geometric_prompt（归一化 cxcywh，正/负 label）可用、可叠加；processor 无 mask/独立图 exemplar 接口（P3 需走 veval/interactive 路径） |
-| (c) 32-token | 运行时确认 context_length=32；SIOR/NWPU/SOTA/FAST 共 85 类名 token 2–6，**零截断**；iSAID 待数据落地补跑；OVRSISBenchV2 128 类名清单待取（脚本支持 `--classes-file`） |
+| (c) 32-token | 运行时确认 context_length=32；SCORE 五 split 共 **100 类名 token 2–6，零截断**（iSAID 数据落地后补跑完成）；OVRSISBenchV2 128 类名清单待取（脚本支持 `--classes-file`） |
 | (d) 多短语 | set_text_prompt 为替换语义；联合串 "shoe; person" 整体成单概念查询返回 0 → 每图×每类独立调用，图像特征可共享（与 S2.2 harness 设计吻合） |
 
 ### 1.4 评测管线（S1.4）
@@ -53,7 +58,7 @@
 |---|---|---|
 | S1.1 | 可 import env + 权重路径进 environment*.sh；官方 demo 单图 text prompt 跑通 | ✅（含 license-note.md 登记结论；E1 维持"低"） |
 | S1.2 | (a)–(d) 各有可复跑脚本与结论段落 | ✅（validate_api.py 四子命令 + sam3-api-notes.md；(c) iSAID/OVRSISBenchV2 补跑项已列） |
-| S1.3 | 每数据集 loader 冒烟通过（图数/实例数/类别表与官方一致）；GT 来源落档 | ◐ 测试集+SIOR 全 PASS，gt-provenance.md 已登记；iSAID 在途、NWPU-Refer 待网盘 |
+| S1.3 | 每数据集 loader 冒烟通过（图数/实例数/类别表与官方一致）；GT 来源落档 | ✅ 五个 SCORE split 全 PASS + zip CRC 校验；gt-provenance.md 已登记；NWPU-Refer 待网盘（不阻塞 P0 三测试集主协议） |
 | S1.4 | 伪造预测自测通过；口径写进 eval/README.md | ✅ |
 | S1.5 | `tests/smoke_pipeline.py` 空跑通过（M0） | ✅ 2026-09-02 M0 四项全绿（iSAID 不在 M0 必需集内） |
 
@@ -69,8 +74,9 @@
 
 ## 4. 决定与下一步
 
-1. **M0 判定：达成**（S1.3 的 iSAID/NWPU-Refer 两项不阻塞 M0 必需集；
-   补齐前 P0 的 iSAID 训练侧与 NWPU-Refer 子集实验不启动）。
+1. **M0 判定：达成**（2026-09-02 冒烟四项全绿）。iSAID 已落地并通过 CRC 校验
+   与冒烟；唯一缺项 NWPU-Refer 补充集在网盘侧，只影响 P0 的补充实验，不影响
+   SCORE 三测试集主协议。
 2. 权重渠道：当前 ModelScope 镜像（sha256 验证）；**用户待办**：以英文表单
    重新申请 HF `facebook/sam3` 访问（被拒后无重新申请入口，需新账号或 GitHub
    issue 人工复核），获批后用官方 LFS oid 复核本地权重并更新 license-note。

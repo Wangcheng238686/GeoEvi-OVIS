@@ -13,8 +13,10 @@ COCO-instance 子树 `val/instances_val.json (+ images/)`（训练集为
 | NWPU | 测试 | 731 / 2,661 / 10 | 人工 | ✅ 冒烟 PASS（与 SCORE 论文 §4.1 一致） |
 | SOTA | 测试 | 874 / 29,247 / 18 | SAM 伪标签 | ✅ 冒烟 PASS |
 | FAST | 测试 | 3,207 / 43,258 / 37 | SAM 伪标签 | ✅ 冒烟 PASS |
-| iSAID | 训练 | 论文口径 18,732 / – / 15 | 人工 | 下载中（29GB） |
-| SIOR | 训练 | 论文口径 11,725 / – / 20 | SAM 伪标签 | 下载中（7.5GB） |
+| SIOR（train） | 训练 | 11,725 / 68,062 / 20 | SAM 伪标签 | ✅ 冒烟 PASS |
+| SIOR-val | 测试（协议） | 11,738 / 124,373 / 20 | SAM 伪标签 | ✅ 冒烟 PASS |
+| iSAID（train） | 训练 | 28,029 / 704,684 / 15 | 人工 | ✅ 冒烟 PASS（论文称 18,732 图，以 HF json 为准，差异双登记） |
+| iSAID-val | 测试（协议） | 9,512 / 235,531 / 15 | 人工 | ✅ 冒烟 PASS |
 | NWPU-Refer category 子集 | 补充 | – | referring 人工 | **待用户百度网盘下载**（官方仅发网盘：`https://pan.baidu.com/s/1HzLVXSqk_m4zWWJ-EJ5SkA` 提取码 `NWPU`；HF 无镜像） |
 
 GT 来源逐条依据见 `docs/gt-provenance.md`（E5）。
