@@ -123,5 +123,6 @@ FC-CLIP(iSAID)；与训练过的方法差距集中在语义排序而非实例发
    （text 无法分→显式承认不可分，不硬造）。
 4. 论文表述注意：零样本数字与闭集训练基线不同列直接排名（§1.2 表已分离
    训练 setting 列）；SOTA/FAST 为 SAM 伪标签 GT，论文按集注明（E5）。
-5. 遗留：NWPU-Refer 补充集待网盘数据（不阻塞主协议）；OVRSISBenchV2 103
-   类名 token 实测已完成（S1.2c 闭环）。
+5. 遗留清零：NWPU-Refer 补充集已于 2026-09-03 到货并完成 category 子集构建
+   （2,541 图 / 10,071 实例 / 31 类，冒烟 PASS；GT 来源与粘连风险登记见
+   gt-provenance.md）；OVRSISBenchV2 103 类名 token 实测已完成（S1.2c 闭环）。

@@ -128,6 +128,20 @@ DATASETS = OrderedDict([
             "windmill"],
         notes={"gt": "SAM pseudo-label (SAMRS from DIOR)"},
     )),
+    ("NWPU-Refer", DatasetSpec(
+        # Supplement (implementation-v2 S1.3): category subset of the
+        # NWPU-Refer test split, built by data/build_nwpurefer_category.py
+        # (extraction rule registered in its docstring). 1024-2048px images:
+        # the first real validation ground for the S2.3 window mode.
+        name="NWPU-Refer", role="supplement",
+        val_json=Path("NWPU-Refer/val/instances_val.json"),
+        images_dir=Path("NWPU-Refer/val/images"),
+        expected_images=2541, expected_annotations=10071,
+        expected_categories=None,  # 31 cleaned names; pinned by build script
+        notes={"gt": "human (referring expressions + manual instance masks)",
+               "query": "cleaned English category names; airplaneroad "
+                        "dropped, photovolatic -> photovoltaic panel"},
+    )),
 ])
 
 

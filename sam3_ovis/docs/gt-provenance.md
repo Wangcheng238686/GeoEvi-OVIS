@@ -13,7 +13,7 @@
 | SIOR-val | 测试（协议） | 11,738 / 124,373 / 20 | SAM 伪标签 | SCORE Table 1 在 iSAID 训练时以 SIOR 为测试集 |
 | iSAID | 训练 | 28,029 / 704,684 / 15 | 人工标注 | iSAID 原生人工实例标注；⚠️ SCORE 论文 §4.1 称 18,732 训练图，其 HF json 实为 28,029——split 以 HF 发布为准（E4），差异不裁决、如实双登记 |
 | iSAID-val | 测试（协议） | 9,512 / 235,531 / 15 | 人工标注 | SCORE Table 1 在 SIOR 训练时以 iSAID 为测试集 |
-| NWPU-Refer category 子集 | 补充 | 未开始 | referring 人工表达式 + 实例 mask | arXiv 2506.03583（西工大），GitHub CVer-Yang/NWPU-Refer |
+| NWPU-Refer category 子集 | 补充 | 2,541 图 / 10,071 实例 / 31 类（2,560 查询对） | referring 人工表达式 + **人工实例 mask** | arXiv 2506.03583（西工大）；test split 抽取规则登记于 `data/build_nwpurefer_category.py` docstring；**粘连风险**：实例 mask 可能由语义 mask 连通域分解而来，贴合目标可能被并成单实例（实现文档 S1.3 要求标注；数据侧 0 个多部件多边形，风险无法从多边形数排除，解读数字时保留）；脏类清洗：`airplaneroad` 剔除、`photovolatic`→"photovoltaic panel"（仅查询侧） |
 
 含义与影响（对应 design-v2 §12.3 E5）：
 

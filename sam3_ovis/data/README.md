@@ -17,7 +17,7 @@ COCO-instance 子树 `val/instances_val.json (+ images/)`（训练集为
 | SIOR-val | 测试（协议） | 11,738 / 124,373 / 20 | SAM 伪标签 | ✅ 冒烟 PASS |
 | iSAID（train） | 训练 | 28,029 / 704,684 / 15 | 人工 | ✅ 冒烟 PASS（论文称 18,732 图，以 HF json 为准，差异双登记） |
 | iSAID-val | 测试（协议） | 9,512 / 235,531 / 15 | 人工 | ✅ 冒烟 PASS |
-| NWPU-Refer category 子集 | 补充 | – | referring 人工 | **待用户百度网盘下载**（官方仅发网盘：`https://pan.baidu.com/s/1HzLVXSqk_m4zWWJ-EJ5SkA` 提取码 `NWPU`；HF 无镜像） |
+| NWPU-Refer category 子集 | 补充 | 2,541 / 10,071 / 31 | referring 人工 | ✅ 冒烟 PASS（2026-09-03 到货；test split，构建规则见 `build_nwpurefer_category.py`；1024–2048px 真大图档） |
 
 GT 来源逐条依据见 `docs/gt-provenance.md`（E5）。
 
