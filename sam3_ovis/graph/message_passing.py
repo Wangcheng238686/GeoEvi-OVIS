@@ -100,21 +100,30 @@ def propagate_reliability(g: EvidenceGraph) -> Dict[str, float]:
     return rel
 
 
-def merge_duplicate_clusters(
-    g: EvidenceGraph,
-    rel: Dict[str, float],
-) -> List[dict]:
-    """Support-edge connected components restricted to overlapping pairs
-    (IoU >= merge_iou) form duplicate clusters. Per cluster: representative
-    mask = highest-rel member; merged score = 1 - prod(1 - rel_i)
-    (probabilistic OR — duplicates reinforce). Returns merged detections."""
+def pairwise_iou_matrix(masks: np.ndarray, chunk: int = 32) -> np.ndarray:
+    """Vectorized pairwise mask IoU. masks: (N, H, W) bool. Returns (N, N)."""
+    n = masks.shape[0]
+    flat = masks.reshape(n, -1).astype(np.float32)
+    areas = flat.sum(axis=1)
+    iou = np.zeros((n, n), dtype=np.float32)
+    for i in range(0, n, chunk):
+        block = flat[i:i + chunk]
+        inter = block @ flat.T
+        union = areas[i:i + chunk, None] + areas[None, :] - inter
+        iou[i:i + chunk] = np.divide(inter, union,
+                                     out=np.zeros_like(inter),
+                                     where=union > 0)
+    return iou
+
+
+def build_duplicate_clusters(g: EvidenceGraph, iou_fn) -> List[List[str]]:
+    """Support-edge connected components restricted to pairs whose
+    iou_fn(a, b) >= merge_iou. Cluster membership is independent of
+    reliability — compute once per (image, class), reuse across variants."""
 
     cands = _own_candidates(g)
     if not cands:
         return []
-    masks = {c.id: _mask_arr(c.payload["rle"]).astype(bool) for c in cands}
-
-    # union-find over overlapping support pairs
     parent = {c.id: c.id for c in cands}
 
     def find(x):
@@ -128,19 +137,48 @@ def merge_duplicate_clusters(
         if ra != rb:
             parent[rb] = ra
 
-    support_pairs = [(e.src, e.dst) for e in g.edges
-                     if e.kind is EdgeKind.SAME_CLASS_SUPPORT
-                     and e.src in rel and e.dst in rel]
-    for a, b in support_pairs:
-        if _pair_iou(masks[a], masks[b]) >= MP.merge_iou:
-            union(a, b)
+    for e in g.edges:
+        if e.kind is not EdgeKind.SAME_CLASS_SUPPORT:
+            continue
+        if e.src not in parent or e.dst not in parent:
+            continue
+        if iou_fn(e.src, e.dst) >= MP.merge_iou:
+            union(e.src, e.dst)
 
     clusters: Dict[str, List[str]] = {}
-    for cid in rel:
+    for cid in parent:
         clusters.setdefault(find(cid), []).append(cid)
+    return list(clusters.values())
 
+
+def merge_duplicate_clusters(
+    g: EvidenceGraph,
+    rel: Dict[str, float],
+) -> List[dict]:
+    """Backward-compatible wrapper: builds clusters (lazy per-pair IoU) then
+    scores them. Prefer build_duplicate_clusters + score_clusters when the
+    same graph is scored under multiple variants (S3.5)."""
+    masks = {c.id: _mask_arr(c.payload["rle"]).astype(bool)
+             for c in _own_candidates(g)}
+
+    def iou_fn(a, b):
+        return _pair_iou(masks[a], masks[b])
+
+    clusters = build_duplicate_clusters(g, iou_fn)
+    return score_clusters(g, clusters, rel)
+
+
+def score_clusters(
+    g: EvidenceGraph,
+    clusters: List[List[str]],
+    rel: Dict[str, float],
+) -> List[dict]:
+    """Representative = highest-rel member; merged score = probabilistic OR."""
     merged = []
-    for members in clusters.values():
+    for members in clusters:
+        members = [m for m in members if m in rel]
+        if not members:
+            continue
         members.sort(key=lambda m: -rel[m])
         rep = members[0]
         score = 1.0 - float(np.prod([1.0 - rel[m] for m in members]))

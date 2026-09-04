@@ -134,16 +134,17 @@ def np_asfortran(arr):
 # ---------------------------------------------------------------------------
 
 def crop_pil(image, bbox, margin=0.1):
-    """PIL crop with a small relative margin; falls back to full image."""
-    from PIL import Image  # noqa: F401
-
+    """PIL crop with a small relative margin; degenerate bboxes are clamped
+    to >= 1 pixel inside the image (RLE toBbox can yield w/h = 0)."""
     if bbox is None:
         return image
     x, y, w, h = bbox
     mx, my = w * margin, h * margin
-    box = (max(0, int(x - mx)), max(0, int(y - my)),
-           min(image.width, int(x + w + mx)), min(image.height, int(y + h + my)))
-    return image.crop(box)
+    x1 = min(max(0, int(x - mx)), image.width - 1)
+    y1 = min(max(0, int(y - my)), image.height - 1)
+    x2 = min(image.width, max(x1 + 1, int(x + w + mx)))
+    y2 = min(image.height, max(y1 + 1, int(y + h + my)))
+    return image.crop((x1, y1, x2, y2))
 
 
 def build_full_graph(
@@ -215,14 +216,15 @@ def build_full_graph(
 
     # §6 scene
     if provider is not None and image is not None:
-        phrases = list(scene_phrases or SCENE_PHRASES)
-        txt = provider.encode_texts_cached(phrases)
-        img_feat = provider.encode_images_cached([("__global__", image)])["__global__"]
-        scene_scores = {p: float(np.dot(img_feat, txt[p])) for p in phrases}
-        crop_image_cos = {
-            c.id: float(np.dot(crop_feats[c.id], img_feat))
-            for c in g.by_kind(NodeKind.CANDIDATE) if c.id in crop_feats}
-        build_scene_edges(g, scene_scores, crop_image_cos)
+        phrases = SCENE_PHRASES if scene_phrases is None else scene_phrases
+        if phrases:
+            txt = provider.encode_texts_cached(phrases)
+            img_feat = provider.encode_images_cached([("__global__", image)])["__global__"]
+            scene_scores = {p: float(np.dot(img_feat, txt[p])) for p in phrases}
+            crop_image_cos = {
+                c.id: float(np.dot(crop_feats[c.id], img_feat))
+                for c in g.by_kind(NodeKind.CANDIDATE) if c.id in crop_feats}
+            build_scene_edges(g, scene_scores, crop_image_cos)
 
     # §7 unknown
     build_unknown_edges(g)

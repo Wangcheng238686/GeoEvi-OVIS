@@ -41,6 +41,33 @@ def _rle_arr(rle: dict) -> np.ndarray:
     return mask_util.decode(r).astype(np.uint8)
 
 
+# Per-image decode cache: pool items reuse the SAME rle dict objects across
+# class-graphs of one image, so id()-keyed caching removes the repeated
+# decodes that dominate ablation runtime. Cleared between images by
+# clear_rle_cache() (caller responsibility).
+_ARR_CACHE: Dict[int, tuple] = {}
+
+
+def clear_rle_cache() -> None:
+    _ARR_CACHE.clear()
+
+
+def _cached_arr_bbox(rle: dict):
+    key = id(rle)
+    hit = _ARR_CACHE.get(key)
+    if hit is None:
+        from pycocotools import mask as mask_util
+
+        r = dict(rle)
+        if isinstance(r["counts"], str):
+            r["counts"] = r["counts"].encode("utf-8")
+        arr = mask_util.decode(r)
+        bx = mask_util.toBbox(r)
+        hit = (arr, [float(bx[0]), float(bx[1]), float(bx[2]), float(bx[3])])
+        _ARR_CACHE[key] = hit
+    return hit
+
+
 def _edge(g: EvidenceGraph, src: str, dst: str, kind: EdgeKind,
           weight: float, **attrs) -> Optional[Edge]:
     if src not in g.nodes or dst not in g.nodes:
@@ -55,7 +82,8 @@ def ring_band(mask: np.ndarray, area_px: float) -> np.ndarray:
     """Ring band = dilate(mask, r) minus mask; r = BAND_RATIO * sqrt(area)."""
     r = max(3, int(round(THRESHOLDS.band_ratio * np.sqrt(max(area_px, 1.0)))))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
-    return cv2.dilate(mask, kernel) - mask
+    dil = cv2.dilate(mask.astype(np.uint8), kernel)
+    return (dil.astype(bool) & ~mask.astype(bool))
 
 
 # ---------------------------------------------------------------------------
@@ -127,25 +155,34 @@ def build_competition_edges(
 ) -> List[Edge]:
     """Cross-class candidate pairs with IoU >= theta_o get weight=IoU.
     Rival candidates are added as CANDIDATE nodes (id `cand:<id>@<class>`)
-    so the graph stays closed under its edges."""
+    so the graph stays closed under its edges. Pairwise IoU uses the
+    per-image decode cache + bbox prefilter."""
     th = THRESHOLDS
     out = []
     added: Dict[str, str] = {}
     for cand in g.by_kind(NodeKind.CANDIDATE):
-        m = _rle_arr(cand.payload["rle"])
+        m, mb = _cached_arr_bbox(cand.payload["rle"])
+        m = m.astype(bool)
         for rival in rivals:
             for oc in other_candidates.get(rival, []):
                 rid = f"cand:{oc['id']}@{rival}"
                 if rid not in added:
                     if rid not in g.nodes:
+                        om, ob = _cached_arr_bbox(oc["rle"])
                         g.add_node(Node(
                             id=rid, kind=NodeKind.CANDIDATE,
                             payload={"score": float(oc["score"]),
                                      "rle": oc["rle"],
-                                     "area_px": float(int(_rle_arr(oc["rle"]).sum())),
+                                     "area_px": float(om.sum()),
+                                     "bbox": ob,
                                      "rival_class": rival}))
                     added[rid] = rival
-                om = _rle_arr(oc["rle"])
+                om, ob = _cached_arr_bbox(oc["rle"])
+                # bbox prefilter
+                if (mb[0] + mb[2] <= ob[0] or ob[0] + ob[2] <= mb[0]
+                        or mb[1] + mb[3] <= ob[1]
+                        or ob[1] + ob[3] <= mb[1]):
+                    continue
                 inter = int((m & om).sum())
                 if inter == 0:
                     continue
@@ -211,19 +248,20 @@ def band_evidence(
     """Map each candidate id -> classes with a high-conf candidate whose mask
     overlaps the candidate's ring band."""
     th = THRESHOLDS
-    out: Dict[str, List[str]] = {}
     own = {c.id: c for c in g.by_kind(NodeKind.CANDIDATE)}
+    out: Dict[str, List[str]] = {}
     for cand in own.values():
-        mask = _rle_arr(cand.payload["rle"])
-        band = ring_band(mask, cand.payload["area_px"])
+        m, _ = _cached_arr_bbox(cand.payload["rle"])
+        m = m.astype(bool)
+        band = ring_band(m, cand.payload["area_px"])
         ev = []
         for cls, cands in all_candidates_by_class.items():
             for oc in cands:
                 nt = norm_text(oc["score"])
                 if nt < th.context_conf_floor:
                     continue
-                om = _rle_arr(oc["rle"])
-                if (band & om).sum() > 0:
+                om, _ = _cached_arr_bbox(oc["rle"])
+                if (band & om.astype(bool)).sum() > 0:
                     ev.append(cls)
                     break
         if ev:
