@@ -15,6 +15,7 @@ design-v2.md §5 的实例化模块。**S3.2 已完成**（2026-09-03）：六�
 | `edges.py` | 文本—实例 / 同类支持（外观+尺度臂取 max）/ 相似类竞争 / 环带上下文 / 场景（覆盖转属性）/ unknown 冲突 | ✅ S3.2 |
 | `priors.py` | iSAID+SIOR train 类别共现先验表（拉普拉斯平滑）→ `$SAM3_OVIS_DATA_ROOT/priors/` | ✅ S3.2 |
 | `completeness.py` | 完整性三指标 + 图级不完整风险分（公式见下） | ✅ S3.3 |
+| `message_passing.py` | 两轮消息传递（手定权重 §11）→ 候选可靠性 → 重复簇概率或合并（NMS 升级）→ 风险调制排序与告警 | ✅ S3.4 |
 
 ## 完整性指标（S3.3，登记于 docs/graph-thresholds.md §10）
 
@@ -44,10 +45,20 @@ $PYTHON sam3_ovis/tests/test_graph_edges.py       # 六类边方向与权重域 
 $PYTHON sam3_ovis/tests/test_completeness.py      # ECR/URD/CCR/风险分 + 池过滤（S3.3 判据）
 ```
 
-## 下一步（S3.4/S3.5）
+## S3.4 算子（已实现，登记于 docs/graph-thresholds.md §11）
 
-- S3.4 两轮消息传递打分 → 候选可靠性分 → 分数加权合并（NMS 升级）+
-  端到端单图 demo（消费 S3.2 边与 S3.3 风险分）；
+```text
+两轮消息传递：rel' = clip(rel + α_s·支持·(1−rel) − α_c·竞争·rel
+                            + α_x·上下文·(1−rel) + α_p·场景·(1−rel))
+              α_s/α_c/α_x/α_p = 0.15/0.30/0.10/0.05，rivals 为静态消息源
+重复簇：支持边连通分量 ∩ 成对 IoU ≥ 0.5；merged = 1 − Π(1 − rel_i)
+最终分：final = rel × (1 − 0.5·R)；R ≥ 0.5 触发"预测可能不完整"告警
+```
+
+端到端单图 demo：`inference/demo_graph.py`（`--min-gt` 区分正样本/纯FP 展示）。
+
+## 下一步（S3.5）
+
 - S3.5 消融矩阵 A0–A3（P1 出口判据：A2−A0 ≥ +2 mAP 且 A2−A1 ≥ +1 mAP）。
 
 红线提示：上下文/场景只作软分数（config 内全部权重域 [0,1]，无硬规则）；

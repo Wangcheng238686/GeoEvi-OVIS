@@ -6,7 +6,8 @@
 
 - 当前设计：[`design-v2.md`](./design-v2.md)
 - 当前实施：[`implementation-v2.md`](./implementation-v2.md)（分阶段步骤、判据与报告制度）
-- 状态：概念架构已收敛，尚未进入实现细化
+- 面向项目负责人的现状说明：[`project-explainer.md`](./project-explainer.md)（每次项目解释后同步维护）
+- 状态：design-v2/implementation-v2 主线实施中（P-1、P0 已闭环，P1 进行中）
 - 主任务：SCORE text-only OV-RSIS
 - 主基座：SAM3
 - 核心机制：同图实例—上下文证据图
