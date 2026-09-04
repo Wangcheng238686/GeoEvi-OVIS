@@ -164,36 +164,41 @@ def build_competition_edges(
 
 def build_context_edges(
     g: EvidenceGraph,
-    prior_cond: Dict[str, Dict[str, float]],
+    prior_row: Optional[Dict],
+    prior_vocab: set,
     evidence_by_class: Dict[str, List[str]],
 ) -> List[Edge]:
     """Ring-band soft co-occurrence.
 
-    evidence_by_class: class name -> candidate ids of that class whose
-    norm_text >= context_conf_floor and whose mask intersects the band.
-    weight = max smoothed prior over the evidence classes; floor applied;
-    unmatched class names get prior_floor + `prior=unmatched`.
+    prior_row: the query class's row ({n_images, cond}) from a priors table;
+    cond already covers the full vocabulary (j != i, Laplace-smoothed), so
+    an in-vocabulary never-co-occurring class gets its smoothed value —
+    `prior_floor` is only a lower clamp. "unmatched" (floor + flag) is
+    reserved for evidence classes outside the prior vocabulary. Evidence of
+    the query class itself is skipped: same-class proximity is
+    SAME_CLASS_SUPPORT's job, and P(i|i) is undefined under j != i smoothing.
     """
     th = THRESHOLDS
     query_class = g.class_name
-    row = prior_cond.get(query_class)
     out = []
     for cand in g.by_kind(NodeKind.CANDIDATE):
-        best_class, best_w, unmatched = None, 0.0, True
+        best_class, best_w, matched = None, 0.0, False
         for ev_class in evidence_by_class.get(cand.id, []):
-            if row is not None and ev_class in row.get("cond", {}):
-                w = row["cond"][ev_class]
-                unmatched = False
-            else:
-                w = th.prior_floor
-            if w > best_w:
-                best_class, best_w = ev_class, w
+            if ev_class == query_class:
+                continue
+            in_vocab = ev_class in prior_vocab
+            w = prior_row["cond"].get(ev_class, 0.0) \
+                if (prior_row is not None and in_vocab) else 0.0
+            if in_vocab and w > best_w:
+                best_class, best_w, matched = ev_class, w, True
+            elif not in_vocab and best_class is None:
+                best_class, best_w = ev_class, th.prior_floor
         if best_class is None:
             continue
         w = max(th.prior_floor, best_w)
         e = _edge(g, cand.id, f"{cand.id}:ctx", EdgeKind.INSTANCE_CONTEXT,
-                  w, evidence=best_class,
-                  prior="matched" if not unmatched else "unmatched")
+                  w, evidence=best_class, prior_value=round(best_w, 6),
+                  prior="matched" if matched else "unmatched")
         if e is not None:
             out.append(e)
     return out

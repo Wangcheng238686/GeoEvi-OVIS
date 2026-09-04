@@ -25,13 +25,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+from graph.config import THRESHOLDS
 from graph.schema import (Edge, EdgeKind, EvidenceGraph, Node, NodeKind)
-
-# scale-ratio proximity: weight = 1 - min(1, ratio_gap / ratio_ref). The
-# numeric reference is a v0 heuristic; it is re-registered (or kept) when
-# S3.2 freezes thresholds.
-SCALE_RATIO_REF = 3.0
-
 
 def _from_rle(rle: dict):
     from pycocotools import mask as mask_util
@@ -97,14 +92,15 @@ def build_graph(
         g.add_edge(Edge(src=cid, dst="scene", kind=EdgeKind.INSTANCE_SCENE,
                         weight=round(min(1.0, w_cov * 10.0), 6),
                         attrs={"area_share": w_cov}))
-        # pairwise same-class support (scale arm)
+        # pairwise same-class support (scale arm; SCALE_K is a registered
+        # threshold — single source: graph/config.py)
         for other in list(g.by_kind(NodeKind.CANDIDATE)):
             if other.id == cid:
                 continue
             a1 = g.nodes[cid].payload["area_px"]
             a2 = other.payload["area_px"]
             ratio = max(a1, a2) / max(min(a1, a2), 1.0)
-            w = max(0.0, 1.0 - ratio / SCALE_RATIO_REF)
+            w = max(0.0, 1.0 - ratio / THRESHOLDS.scale_k)
             g.add_edge(Edge(src=cid, dst=other.id,
                             kind=EdgeKind.SAME_CLASS_SUPPORT,
                             weight=round(w, 6),
@@ -158,7 +154,7 @@ def build_full_graph(
     image_size: Optional[tuple] = None,
     other_candidates: Optional[Dict[str, List[dict]]] = None,
     text_sim: Optional[Dict[str, float]] = None,
-    prior_cond: Optional[Dict[str, Dict[str, float]]] = None,
+    prior: Optional[Dict] = None,
     provider=None,
     scene_phrases: Optional[Sequence[str]] = None,
 ):
@@ -211,9 +207,11 @@ def build_full_graph(
         build_competition_edges(g, rivals, other_candidates)
 
     # §5 context
-    if prior_cond and other_candidates:
+    if prior and other_candidates:
+        prior_row = prior.get("classes", {}).get(class_name)
+        prior_vocab = set(prior.get("vocabulary", []))
         evidence = band_evidence(g, other_candidates)
-        build_context_edges(g, prior_cond, evidence)
+        build_context_edges(g, prior_row, prior_vocab, evidence)
 
     # §6 scene
     if provider is not None and image is not None:

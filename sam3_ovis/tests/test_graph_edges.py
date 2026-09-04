@@ -116,24 +116,86 @@ def test_context():
     g = mk_graph([
         {"id": "t", "score": 0.95, "rle": rle(20, 20, 10, 10)},
     ])
-    prior = {"plane": {"cond": {"ship": 0.8}}}
-    # ship candidate overlaps the band of t (band radius ~25px around 10x10)
-    evidence = {"cand:t": ["ship"]}
-    E.build_context_edges(g, prior, evidence)
+    prior_row = {"n_images": 100, "cond": {"ship": 0.8}}
+    prior_vocab = {"plane", "ship"}          # truck NOT in vocabulary
+    E.build_context_edges(g, prior_row, prior_vocab, {"cand:t": ["ship"]})
     ctx = [e for e in g.edges if e.kind is EdgeKind.INSTANCE_CONTEXT
-           and e.dst == "cand:t:ctx" and e.attrs.get("evidence")]
-    # structural context edge (weight 0) built by builder; ours carries evidence
+           and e.attrs.get("evidence")]
     assert len(ctx) == 1
     assert abs(ctx[0].weight - 0.8) < 1e-6 and ctx[0].attrs["prior"] == "matched"
 
-    # unmatched class name -> prior_floor + flagged
-    prior2 = {"plane": {"cond": {}}}
-    E.build_context_edges(g, prior2, {"cand:t": ["truck"]})
+    # in-vocabulary never-co-occurring class -> smoothed value (floor-clamped),
+    # still "matched"; raw prior value kept in attrs for auditability
+    prior_row2 = {"n_images": 100, "cond": {"ship": 0.8, "truck": 0.005}}
+    E.build_context_edges(g, prior_row2, prior_vocab | {"truck"},
+                          {"cand:t": ["truck"]})
     ctx2 = [e for e in g.edges if e.kind is EdgeKind.INSTANCE_CONTEXT
-            and e.attrs.get("evidence") == "truck"]
+            and e.attrs.get("evidence") == "truck"
+            and e.attrs.get("prior") == "matched"]
     assert len(ctx2) == 1
-    assert abs(ctx2[0].weight - 0.01) < 1e-6 and ctx2[0].attrs["prior"] == "unmatched"
+    assert abs(ctx2[0].weight - 0.01) < 1e-6          # floor clamp
+    assert abs(ctx2[0].attrs["prior_value"] - 0.005) < 1e-6
+
+    # out-of-vocabulary class -> floor + flagged unmatched
+    E.build_context_edges(g, prior_row, prior_vocab, {"cand:t": ["truck"]})
+    ctx3 = [e for e in g.edges if e.kind is EdgeKind.INSTANCE_CONTEXT
+            and e.attrs.get("evidence") == "truck"
+            and e.attrs.get("prior") == "unmatched"]
+    assert len(ctx3) == 1 and abs(ctx3[0].weight - 0.01) < 1e-6
+
+    # query-class evidence is skipped (P(i|i) undefined; SAME_CLASS_SUPPORT's job)
+    g2 = mk_graph([
+        {"id": "t", "score": 0.95, "rle": rle(20, 20, 10, 10)},
+    ])
+    E.build_context_edges(g2, prior_row, prior_vocab, {"cand:t": ["plane", "ship"]})
+    ctx4 = [e for e in g2.edges if e.kind is EdgeKind.INSTANCE_CONTEXT
+            and e.attrs.get("evidence")]
+    assert all(e.attrs["evidence"] == "ship" for e in ctx4)
     print("context OK")
+
+
+def test_full_graph_integration():
+    """build_full_graph smoke: six edge kinds present, no dangling edges,
+    all weights in [0,1], rival candidates materialised as nodes."""
+    from graph.builder import build_full_graph
+    from PIL import Image
+
+    def rle_(x, y, w, h, H=64, W=64):
+        return rle(x, y, w, h, H, W)
+
+    img = Image.new("RGB", (64, 64), (30, 40, 50))
+    g = build_full_graph(
+        image_id=1, class_name="plane",
+        candidates=[
+            {"id": "a", "score": 0.9, "rle": rle_(0, 0, 20, 20),
+             "bbox": [0, 0, 20, 20]},
+            {"id": "b", "score": 0.1, "rle": rle_(0, 0, 20, 20),
+             "bbox": [0, 0, 20, 20]},
+        ],
+        image=img, image_size=(64, 64),
+        other_candidates={"helicopter": [
+            {"id": "h1", "score": 0.5, "rle": rle_(0, 0, 20, 20)}]},
+        text_sim={"helicopter": 0.8, "ship": 0.3},
+        prior={"vocabulary": ["plane", "helicopter"],
+               "classes": {"plane": {"n_images": 10,
+                                     "cond": {"helicopter": 0.4}}}},
+        provider=MockProvider(),
+    )
+    kinds = {e.kind for e in g.edges}
+    for k in (EdgeKind.TEXT_INSTANCE, EdgeKind.SAME_CLASS_SUPPORT,
+              EdgeKind.COMPETING_CLASS, EdgeKind.INSTANCE_CONTEXT,
+              EdgeKind.INSTANCE_SCENE, EdgeKind.UNKNOWN_CONFLICT):
+        assert k in kinds, f"missing {k}"
+    for e in g.edges:
+        assert e.src in g.nodes and e.dst in g.nodes, f"dangling {e}"
+        assert 0.0 <= e.weight <= 1.0, f"weight domain: {e}"
+    rival = g.nodes.get("cand:h1@helicopter")
+    assert rival is not None and rival.kind is NodeKind.CANDIDATE
+    assert g.nodes["scene"].payload.get("top_scenes")
+    # unknown conflict fired for the weak duplicate that lost to the rival
+    assert any(e.kind is EdgeKind.UNKNOWN_CONFLICT and e.src == "cand:b"
+               for e in g.edges)
+    print("full-graph integration OK")
 
 
 def test_band_evidence_geometry():
@@ -176,6 +238,7 @@ def main():
     test_context()
     test_band_evidence_geometry()
     test_scene()
+    test_full_graph_integration()
     print("graph edges tests PASSED")
 
 
