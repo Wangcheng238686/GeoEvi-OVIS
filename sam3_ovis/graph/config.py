@@ -82,3 +82,20 @@ class CompletenessThresholds:
 
 
 COMPLETENESS = CompletenessThresholds()
+
+
+@dataclass(frozen=True)
+class MessagePassingThresholds:
+    """S3.4 message passing + merge (docs/graph-thresholds.md §11)."""
+
+    rounds: int = 2
+    alpha_support: float = 0.15
+    alpha_compete: float = 0.30
+    alpha_context: float = 0.10
+    alpha_scene: float = 0.05
+    lambda_risk: float = 0.5
+    theta_alarm: float = 0.5
+    merge_iou: float = 0.5          # cluster pairs must overlap (dup_iou)
+
+
+MP = MessagePassingThresholds()

@@ -110,3 +110,30 @@ RemoteCLIP 文本校验，与 design-v2 §4 边界一致）。
 ECR 面积基与 URD 计数基互补（面积上被高置信覆盖、计数上仍有成片低分回声
 是两类不同症状）。已知盲区：查询类"整图零响应"时 ECR=1、R=0——完整性
 不感知完全漏检，这正是它不能替代 G1 召回的原因，论文如实声明。
+
+## 11. 消息传递与合并算子登记（S3.4，2026-09-03）
+
+两轮消息传递（手定权重，P1 不学习）。候选先验 `rel_0 = norm_text(score)`；
+每轮聚合四路消息后更新，clip 到 [0,1]：
+
+```text
+support_msg(c)   = max over SAME_CLASS_SUPPORT 邻 (w·rel(邻))
+compete_msg(c)   = max over COMPETING_CLASS 邻   (w·rel(邻))
+context_msg(c)   = INSTANCE_CONTEXT 证据边 w（每候选取 max）
+scene_msg(c)     = INSTANCE_SCENE 边 w
+rel' = clip(rel + α_s·support·(1−rel) − α_c·compete·rel
+            + α_x·context·(1−rel) + α_p·scene·(1−rel))
+```
+
+| 参数 | 登记值 |
+|---|---|
+| 轮数 `ROUNDS` | **2** |
+| 支持增益 `α_s` | **0.15** |
+| 竞争惩罚 `α_c` | **0.30** |
+| 上下文增益 `α_x` | **0.10** |
+| 场景增益 `α_p` | **0.05** |
+| 风险调制 `LAMBDA_RISK` | **0.5**：`final(c) = rel(c) · (1 − λ·R)`——R 高的图整体降权（跨图排序受影响，图内排序不变） |
+| 告警阈值 `THETA_ALARM` | **0.5**：R ≥ 阈值在输出中标记"预测可能不完整" |
+| 合并簇 | SAME_CLASS_SUPPORT 边的连通分量，**且要求成对 mask IoU ≥ 0.5**（纯尺度相似不合并） |
+| 簇合并分数 | `merged = 1 − Π(1 − rel_i)`（概率或：重复候选互证增强，区别于标准 NMS 的丢弃） |
+| 簇代表 mask | 簇内 rel 最高的成员（不做像素平均，避免非同一目标的模糊） |
