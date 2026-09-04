@@ -131,3 +131,101 @@ def np_asfortran(arr):
     import numpy as np
 
     return np.asfortranarray(arr)
+
+
+# ---------------------------------------------------------------------------
+# full build (S3.2): structural layer + all six edge families
+# ---------------------------------------------------------------------------
+
+def crop_pil(image, bbox, margin=0.1):
+    """PIL crop with a small relative margin; falls back to full image."""
+    from PIL import Image  # noqa: F401
+
+    if bbox is None:
+        return image
+    x, y, w, h = bbox
+    mx, my = w * margin, h * margin
+    box = (max(0, int(x - mx)), max(0, int(y - my)),
+           min(image.width, int(x + w + mx)), min(image.height, int(y + h + my)))
+    return image.crop(box)
+
+
+def build_full_graph(
+    image_id: int,
+    class_name: str,
+    candidates: List[dict],
+    image=None,
+    image_size: Optional[tuple] = None,
+    other_candidates: Optional[Dict[str, List[dict]]] = None,
+    text_sim: Optional[Dict[str, float]] = None,
+    prior_cond: Optional[Dict[str, Dict[str, float]]] = None,
+    provider=None,
+    scene_phrases: Optional[Sequence[str]] = None,
+):
+    """Full per-(image, class) graph: structural v0 + six edge families.
+
+    provider: object with encode_images_cached / encode_texts_cached /
+    crop_text_cos-like helpers; None -> only geometry/text-free edges.
+    """
+    import numpy as np
+
+    from graph.config import SCENE_PHRASES, THRESHOLDS, norm_text
+    from graph.edges import (band_evidence, build_competition_edges,
+                             build_context_edges, build_scene_edges,
+                             build_support_edges, build_text_instance_edges,
+                             build_unknown_edges)
+
+    g = build_graph(image_id, class_name, candidates, image_size=image_size)
+
+    # §2 text-instance
+    if provider is not None and image is not None:
+        crop_items = []
+        for cand in g.by_kind(NodeKind.CANDIDATE):
+            cp = crop_pil(image, cand.payload.get("bbox"))
+            crop_items.append((cand.id, cp))
+        crop_feats = provider.encode_images_cached(crop_items)
+        txt_feats = provider.encode_texts_cached([class_name])
+        clip_cos = {cid: float(np.dot(crop_feats[cid], txt_feats[class_name]))
+                    for cid in crop_feats}
+        build_text_instance_edges(g, clip_cos)
+    else:
+        build_text_instance_edges(
+            g, {c.id: 0.0 for c in g.by_kind(NodeKind.CANDIDATE)})
+
+    # §3 support (appearance arm upgrades the scale-arm edges)
+    if provider is not None and image is not None:
+        def crop_cos(a, b):
+            fa, fb = crop_feats.get(a), crop_feats.get(b)
+            if fa is None or fb is None:
+                return None
+            return float(np.dot(fa, fb))
+        build_support_edges(g, crop_cos)
+    else:
+        build_support_edges(g, None)
+
+    # §4 competition
+    if other_candidates and text_sim:
+        from graph.edges import competing_classes
+
+        rivals = competing_classes(class_name, text_sim)
+        build_competition_edges(g, rivals, other_candidates)
+
+    # §5 context
+    if prior_cond and other_candidates:
+        evidence = band_evidence(g, other_candidates)
+        build_context_edges(g, prior_cond, evidence)
+
+    # §6 scene
+    if provider is not None and image is not None:
+        phrases = list(scene_phrases or SCENE_PHRASES)
+        txt = provider.encode_texts_cached(phrases)
+        img_feat = provider.encode_images_cached([("__global__", image)])["__global__"]
+        scene_scores = {p: float(np.dot(img_feat, txt[p])) for p in phrases}
+        crop_image_cos = {
+            c.id: float(np.dot(crop_feats[c.id], img_feat))
+            for c in g.by_kind(NodeKind.CANDIDATE) if c.id in crop_feats}
+        build_scene_edges(g, scene_scores, crop_image_cos)
+
+    # §7 unknown
+    build_unknown_edges(g)
+    return g
