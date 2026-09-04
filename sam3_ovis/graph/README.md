@@ -18,16 +18,17 @@ design-v2.md §5 的实例化模块。**S3.2 已完成**（2026-09-03）：六�
 
 ## 完整性指标（S3.3，登记于 docs/graph-thresholds.md §10）
 
-作用域：单 (图, 查询类) 候选池（norm_text ≥ 0.05，rival 节点剔除）。
-`τ_high = 0.5`（复用 S3.2 `context_conf_floor`）；重复/匹配 IoU = 0.5。
+作用域：**登记候选池 = 原始 score ≥ 0.05**（P0 注册池，`compute_completeness`
+内显式过滤；rival 节点剔除）。`τ_high = 0.5` 在 norm_text 尺度（复用 S3.2
+`context_conf_floor`）；重复/匹配 IoU = 0.5。
 
 ```text
 ECR 已解释区域覆盖率 = |∪ mask(高置信 c : norm_text(c) ≥ τ_high)|
-                     / |∪ mask(全部候选)|            （面积基；空池定义为 1.0）
-URD 未解释响应密度   = |{低置信候选 : 与所有高置信候选 IoU < 0.5}|
-                     / |全部候选|                    （计数基）
-CCR 冲突候选率       = |{候选 : 触 COMPETING_CLASS 边 ∨ 同类更高分 IoU ≥ 0.5}|
-                     / |全部候选|
+                     / |∪ mask(池内全部候选)|        （面积基；空池定义为 1.0）
+URD 未解释响应密度   = |{池内低置信候选 : 与所有高置信候选 IoU < 0.5}|
+                     / |池内全部候选|                （计数基）
+CCR 冲突候选率       = |{池内候选 : 触 COMPETING_CLASS 边 ∨ 同类更高分 IoU ≥ 0.5}|
+                     / |池内全部候选|
 R   不完整风险分     = ⅓·(1−ECR) + ⅓·URD + ⅓·CCR      （等权手定，P1 不调参）
 ```
 
@@ -38,15 +39,15 @@ ECR 面积基与 URD 计数基互补；**已知盲区**：整图零响应时 ECR
 ## 单测
 
 ```bash
-$PYTHON sam3_ovis/tests/test_graph_schema.py   # 结构 + 序列化
-$PYTHON sam3_ovis/tests/test_graph_edges.py    # 六类边方向与权重域（S3.2 完成判据）
+$PYTHON sam3_ovis/tests/test_graph_schema.py      # 结构 + 序列化
+$PYTHON sam3_ovis/tests/test_graph_edges.py       # 六类边方向与权重域 + full-graph 集成（S3.2 判据）
+$PYTHON sam3_ovis/tests/test_completeness.py      # ECR/URD/CCR/风险分 + 池过滤（S3.3 判据）
 ```
 
-## 下一步（S3.3/S3.4）
+## 下一步（S3.4/S3.5）
 
-- S3.3 完整性三指标实例化（已解释覆盖率 / 未解释响应密度 / 冲突候选率），
-  公式落本 README；
-- S3.4 两轮消息传递打分 → 候选可靠性 → 分数加权合并（NMS 升级）；
+- S3.4 两轮消息传递打分 → 候选可靠性分 → 分数加权合并（NMS 升级）+
+  端到端单图 demo（消费 S3.2 边与 S3.3 风险分）；
 - S3.5 消融矩阵 A0–A3（P1 出口判据：A2−A0 ≥ +2 mAP 且 A2−A1 ≥ +1 mAP）。
 
 红线提示：上下文/场景只作软分数（config 内全部权重域 [0,1]，无硬规则）；

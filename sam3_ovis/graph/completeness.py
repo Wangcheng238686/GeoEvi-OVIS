@@ -1,18 +1,25 @@
 """Completeness metrics (S3.3, docs/graph-thresholds.md §10).
 
 Per (image, query class) graph-level statistics over the registered
-candidate pool (norm_text >= 0.05, rival nodes excluded):
+candidate pool: raw SAM3 score >= pool_floor (0.05, the P0-registered
+pool — enforced here explicitly, not trusted to upstream), rival nodes
+excluded:
 
   ECR  explained coverage rate      - area of high-confidence union over
-                                      all-candidate union (area base);
-  URD  unexplained response density - low-confidence candidates not matched
-                                      by any high-confidence candidate,
-                                      over all candidates (count base);
+                                      all-pool union (area base);
+  URD  unexplained response density - pool candidates not matched by any
+                                      high-confidence candidate, over the
+                                      pool (count base);
   CCR  conflict candidate rate      - candidates touching a COMPETING_CLASS
                                       edge or duplicated (same-class
                                       higher-score overlap at IoU >= 0.5),
-                                      over all candidates;
+                                      over the pool;
   R    incompleteness risk score    - equal thirds of (1-ECR), URD, CCR.
+
+The high-confidence floor tau_high lives on the norm_text scale (0.5,
+reusing the registered S3.2 context_conf_floor); the pool floor lives on
+the raw score scale (0.05, P0 registration) — the two scales are distinct
+and both are stated in graph-thresholds.md §10.
 
 R modulates final confidence and alarms only (S3.4) — it never creates or
 removes instances. Known blind spot (registered): a class with zero
@@ -39,20 +46,23 @@ def _mask_arr(rle: dict) -> np.ndarray:
 
 
 def compute_completeness(g: EvidenceGraph) -> Dict:
-    """Compute ECR / URD / CCR / risk over the graph's own candidates and
-    store the report in g.attrs['completeness']. Returns the report."""
+    """Compute ECR / URD / CCR / risk over the registered pool and store the
+    report in g.attrs['completeness']. Returns the report."""
     th = COMPLETENESS
-    cands = [c for c in g.by_kind(NodeKind.CANDIDATE)
-             if not c.payload.get("rival_class")]
-    n_all = len(cands)
+    own = [c for c in g.by_kind(NodeKind.CANDIDATE)
+           if not c.payload.get("rival_class")]
+    pool = [c for c in own
+            if float(c.payload.get("score", 0.0)) >= THRESHOLDS.pool_floor]
+    n_excluded = len(own) - len(pool)
+    n_all = len(pool)
 
     masks, nt = {}, {}
-    for c in cands:
+    for c in pool:
         masks[c.id] = _mask_arr(c.payload["rle"]).astype(bool)
         nt[c.id] = norm_text(c.payload["score"])
 
-    high = [c.id for c in cands if nt[c.id] >= th.tau_high]
-    low = [c.id for c in cands if nt[c.id] < th.tau_high]
+    high = [c.id for c in pool if nt[c.id] >= th.tau_high]
+    low = [c.id for c in pool if nt[c.id] < th.tau_high]
 
     # --- ECR (area base) -------------------------------------------------
     all_union = np.zeros_like(next(iter(masks.values()))) if masks else None
@@ -93,7 +103,7 @@ def compute_completeness(g: EvidenceGraph) -> Dict:
                     and not node.payload.get("rival_class"):
                 in_competition.add(ref)
 
-    order = sorted(cands, key=lambda c: -c.payload["score"])
+    order = sorted(pool, key=lambda c: -c.payload["score"])
     duplicated = set()
     for i, ci in enumerate(order):
         for cj in order[:i]:
@@ -119,6 +129,7 @@ def compute_completeness(g: EvidenceGraph) -> Dict:
         "conflict_candidate_rate": round(ccr, 6),
         "risk_score": round(min(1.0, max(0.0, risk)), 6),
         "n_candidates": n_all,
+        "n_pool_excluded": n_excluded,
         "n_high_confidence": len(high),
         "n_low_unexplained": unexplained,
         "n_conflict": len(in_competition) + len(duplicated - in_competition),

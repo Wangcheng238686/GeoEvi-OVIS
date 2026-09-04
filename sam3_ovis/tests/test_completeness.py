@@ -101,6 +101,22 @@ def test_rival_excluded_and_empty():
     print("rival-exclusion + empty OK")
 
 
+def test_pool_floor_enforced():
+    """Sub-floor candidates (raw score < 0.05) are excluded from the pool
+    inside compute_completeness — the registered pool is raw-score based."""
+    g = build_graph(1, "plane", [
+        {"id": "h", "score": 0.9, "rle": rle(0, 0, 20, 20)},
+        # raw 0.03 < pool floor 0.05: must NOT enter the pool / denominators
+        {"id": "sub", "score": 0.03, "rle": rle(40, 0, 10, 10)},
+    ], image_size=(64, 64))
+    r = compute_completeness(g)
+    assert r["n_candidates"] == 1
+    assert r["n_pool_excluded"] == 1
+    assert r["explained_coverage_rate"] == 1.0
+    assert r["unexplained_response_density"] == 0.0
+    print("pool floor OK")
+
+
 def test_domains():
     g = build_graph(1, "plane", [
         {"id": "a", "score": 0.9, "rle": rle(0, 0, 20, 20)},
@@ -121,6 +137,7 @@ def main():
     test_low_unmatched_echoes()
     test_duplicate_and_conflict()
     test_rival_excluded_and_empty()
+    test_pool_floor_enforced()
     test_domains()
     print("completeness tests PASSED")
 
