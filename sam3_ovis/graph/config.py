@@ -56,3 +56,29 @@ def norm_text(score: float, pool_floor: float = THRESHOLDS.pool_floor) -> float:
 def cos01(cos: float) -> float:
     """cosine [-1,1] -> [0,1]."""
     return (cos + 1.0) / 2.0
+
+
+@dataclass(frozen=True)
+class CompletenessThresholds:
+    """S3.3 completeness metrics (docs/graph-thresholds.md §10).
+
+    v0 weights are hand-set equal thirds (P1 is training-free; no tuning).
+    The high-confidence floor REUSES the registered S3.2
+    `context_conf_floor` (0.5); the duplicate/match IoU reuses the 0.5
+    convention from the evaluation/duplicate machinery.
+    """
+
+    w_unexplained_area: float = 1.0 / 3       # (1 - ECR) arm
+    w_unexplained_response: float = 1.0 / 3   # URD arm
+    w_conflict: float = 1.0 / 3               # CCR arm
+
+    @property
+    def tau_high(self) -> float:
+        return THRESHOLDS.context_conf_floor   # 0.5, registered S3.2
+
+    @property
+    def dup_iou(self) -> float:
+        return 0.5
+
+
+COMPLETENESS = CompletenessThresholds()

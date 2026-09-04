@@ -14,6 +14,26 @@ design-v2.md §5 的实例化模块。**S3.2 已完成**（2026-09-03）：六�
 | `provider.py` | `RemoteCLIPProvider`（open_clip ViT-L-14，缓存批处理）+ `MockProvider`（测试） | ✅ S3.2 |
 | `edges.py` | 文本—实例 / 同类支持（外观+尺度臂取 max）/ 相似类竞争 / 环带上下文 / 场景（覆盖转属性）/ unknown 冲突 | ✅ S3.2 |
 | `priors.py` | iSAID+SIOR train 类别共现先验表（拉普拉斯平滑）→ `$SAM3_OVIS_DATA_ROOT/priors/` | ✅ S3.2 |
+| `completeness.py` | 完整性三指标 + 图级不完整风险分（公式见下） | ✅ S3.3 |
+
+## 完整性指标（S3.3，登记于 docs/graph-thresholds.md §10）
+
+作用域：单 (图, 查询类) 候选池（norm_text ≥ 0.05，rival 节点剔除）。
+`τ_high = 0.5`（复用 S3.2 `context_conf_floor`）；重复/匹配 IoU = 0.5。
+
+```text
+ECR 已解释区域覆盖率 = |∪ mask(高置信 c : norm_text(c) ≥ τ_high)|
+                     / |∪ mask(全部候选)|            （面积基；空池定义为 1.0）
+URD 未解释响应密度   = |{低置信候选 : 与所有高置信候选 IoU < 0.5}|
+                     / |全部候选|                    （计数基）
+CCR 冲突候选率       = |{候选 : 触 COMPETING_CLASS 边 ∨ 同类更高分 IoU ≥ 0.5}|
+                     / |全部候选|
+R   不完整风险分     = ⅓·(1−ECR) + ⅓·URD + ⅓·CCR      （等权手定，P1 不调参）
+```
+
+用途与盲区：R 只调制最终置信度与告警（S3.4 消费），不生成/删除实例；
+ECR 面积基与 URD 计数基互补；**已知盲区**：整图零响应时 ECR=1、R=0
+（完整性不感知完全漏检——这正是它不能替代 G1 召回的原因）。
 
 ## 单测
 
