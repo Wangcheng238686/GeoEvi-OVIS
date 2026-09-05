@@ -54,6 +54,31 @@ def _arr(seg, h=None, w=None):
         mask_util.frPyObjects(objs, h, w))).astype(bool)
 
 
+def _mask_bbox(m):
+    """Tight bbox of a bool mask -> (x1, y1, x2, y2); None if empty."""
+    rows = np.any(m, axis=1)
+    cols = np.any(m, axis=0)
+    if not rows.any():
+        return None
+    y1, y2 = np.where(rows)[0][[0, -1]]
+    x1, x2 = np.where(cols)[0][[0, -1]]
+    return int(x1), int(y1), int(x2) + 1, int(y2) + 1
+
+
+def _iou_cropped(m1, b1, m2, b2):
+    """IoU computed on the bbox-intersection slice only (exact, fast)."""
+    ix1, iy1 = max(b1[0], b2[0]), max(b1[1], b2[1])
+    ix2, iy2 = min(b1[2], b2[2]), min(b1[3], b2[3])
+    if ix1 >= ix2 or iy1 >= iy2:
+        return 0.0
+    a = m1[iy1:iy2, ix1:ix2]
+    b = m2[iy1:iy2, ix1:ix2]
+    inter = int((a & b).sum())
+    if inter == 0:
+        return 0.0
+    return inter / float(int(m1.sum()) + int(m2.sum()) - inter)
+
+
 def class_nms(dets, iou_thr=NMS_IOU):
     order = sorted(dets, key=lambda d: -d["score"])
     kept, kept_m = [], []
@@ -109,22 +134,27 @@ def main():
                     for a in gt_list]
             n_gt += len(gt_m)
 
-            # candidate side
-            claimed = set()
-            for ki, (d, m) in enumerate(zip(kept, kept_m)):
+            # candidate side (cropped IoU: bbox prefilter + slice ops)
+            for d, m in zip(kept, kept_m):
+                b1 = _mask_bbox(m)
+                if b1 is None:
+                    cand_stats["background"] += 1
+                    continue
                 best_cat, best_any, best_same = None, 0.0, 0.0
                 for cid, gm in gt_m:
-                    inter = int((m & gm).sum())
-                    if inter == 0:
+                    gb = _mask_bbox(gm)
+                    if gb is None or (b1[0] + b1[2] <= gb[0]
+                                      or gb[0] + gb[2] <= b1[0]
+                                      or b1[1] + b1[3] <= gb[1]
+                                      or gb[1] + gb[3] <= b1[1]):
                         continue
-                    iou = inter / float((m | gm).sum())
+                    iou = _iou_cropped(m, b1, gm, gb)
                     if iou > best_any:
                         best_any, best_cat = iou, cid
                     if cid == d["category_id"]:
                         best_same = max(best_same, iou)
                 if best_same >= MATCH_IOU:
                     cand_stats["tp"] += 1
-                    claimed.add(best_cat)
                 elif best_any >= MATCH_IOU:
                     cand_stats["wrong_class"] += 1
                     confusion_pairs[(name_by_cat[d["category_id"]],
@@ -134,15 +164,22 @@ def main():
                 else:
                     cand_stats["background"] += 1
 
-            # GT side: misses decomposed
+            # GT side: misses decomposed (cropped IoU)
             for cid, gm in gt_m:
+                gb = _mask_bbox(gm)
+                if gb is None:
+                    gt_stats["true_miss"] += 1
+                    continue
                 same_hit = False
                 best_cross, best_cross_cat = 0.0, None
-                for ki, (d, m) in enumerate(zip(kept, kept_m)):
-                    inter = int((m & gm).sum())
-                    if inter == 0:
+                for d, m in zip(kept, kept_m):
+                    b1 = _mask_bbox(m)
+                    if b1 is None or (b1[0] + b1[2] <= gb[0]
+                                      or gb[0] + gb[2] <= b1[0]
+                                      or b1[1] + b1[3] <= gb[1]
+                                      or gb[1] + gb[3] <= b1[1]):
                         continue
-                    iou = inter / float((m | gm).sum())
+                    iou = _iou_cropped(m, b1, gm, gb)
                     if d["category_id"] == cid and iou >= MATCH_IOU:
                         same_hit = True
                         break
