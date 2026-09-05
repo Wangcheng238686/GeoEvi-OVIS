@@ -1,0 +1,81 @@
+{
+ "n_crops": 985,
+ "vocabulary": [
+  "airplane",
+  "baseball_diamond",
+  "basketball_court",
+  "bridge",
+  "ground_track_field",
+  "harbor",
+  "ship",
+  "storage_tank",
+  "tennis_court",
+  "vehicle"
+ ],
+ "results": {
+  "RemoteCLIP_plain": {
+   "top1_acc": 0.7655,
+   "mean_rank": 1.68,
+   "per_class": {
+    "airplane": 0.89,
+    "baseball_diamond": 0.87,
+    "basketball_court": 0.97,
+    "bridge": 0.882,
+    "ground_track_field": 0.86,
+    "harbor": 0.82,
+    "ship": 1.0,
+    "storage_tank": 0.59,
+    "tennis_court": 0.53,
+    "vehicle": 0.26
+   }
+  },
+  "RemoteCLIP_templated": {
+   "top1_acc": 0.7898,
+   "mean_rank": 1.71,
+   "per_class": {
+    "airplane": 0.9,
+    "baseball_diamond": 0.89,
+    "basketball_court": 0.95,
+    "bridge": 0.871,
+    "ground_track_field": 0.94,
+    "harbor": 0.96,
+    "ship": 0.88,
+    "storage_tank": 0.71,
+    "tennis_court": 0.56,
+    "vehicle": 0.25
+   }
+  },
+  "general_plain": {
+   "top1_acc": 0.6477,
+   "mean_rank": 2.1,
+   "per_class": {
+    "airplane": 0.85,
+    "baseball_diamond": 0.88,
+    "basketball_court": 0.88,
+    "bridge": 0.882,
+    "ground_track_field": 0.95,
+    "harbor": 0.43,
+    "ship": 0.44,
+    "storage_tank": 0.05,
+    "tennis_court": 0.56,
+    "vehicle": 0.59
+   }
+  },
+  "general_templated": {
+   "top1_acc": 0.6497,
+   "mean_rank": 2.15,
+   "per_class": {
+    "airplane": 0.93,
+    "baseball_diamond": 0.92,
+    "basketball_court": 0.88,
+    "bridge": 0.894,
+    "ground_track_field": 0.89,
+    "harbor": 0.45,
+    "ship": 0.58,
+    "storage_tank": 0.04,
+    "tennis_court": 0.59,
+    "vehicle": 0.36
+   }
+  }
+ }
+}
