@@ -4,18 +4,20 @@
 
 ## 当前版本
 
-- 当前设计：[`design-v2.md`](./design-v2.md)
-- 当前实施：[`implementation-v2.md`](./implementation-v2.md)（分阶段步骤、判据与报告制度）
+- 当前设计：[`design-v3.0.md`](./design-v3.0.md)
+- 当前实施：[`implementation-v3.0.md`](./implementation-v3.0.md)（分阶段步骤、判据与报告制度）
 - 面向项目负责人的现状说明：[`project-explainer.md`](./project-explainer.md)（每次项目解释后同步维护）
-- 状态：design-v2/implementation-v2 主线实施中（P-1、P0 已闭环，P1 进行中）
+- 状态：v3.0 方法已收敛，尚未实现；先修复实验基础并验证跨类别消歧的作用空间
 - 主任务：SCORE text-only OV-RSIS
 - 主基座：SAM3
-- 核心机制：同图实例—上下文证据图
+- 核心机制：同实例跨类别相对证据；是否需要图由实验决定
 - 扩展模式：GT exemplar、self-exemplar
 - 后置内容：MLLM、跨图持久记忆、SAM3 video memory
 - 风险登记：[`design-v2.md` §12](./design-v2.md)（2026-09-02 可行性分析）
 
 ## 历史版本
+
+- v2：[`design-v2.md`](./design-v2.md) / [`implementation-v2.md`](./implementation-v2.md)，保留原始阈值与结果；后续推进改按 v3.0。
 
 - v1 旧设计与调研材料：[`v1/`](./v1/)
 - 该目录由原 `notes/` 整体迁移而来；其中与当前 v2 不一致的内容均视为历史方案，不作为现行设计口径。
