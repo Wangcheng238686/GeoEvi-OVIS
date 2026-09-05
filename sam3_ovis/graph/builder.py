@@ -158,11 +158,15 @@ def build_full_graph(
     prior: Optional[Dict] = None,
     provider=None,
     scene_phrases: Optional[Sequence[str]] = None,
+    feature_prefix: str = "",
 ):
     """Full per-(image, class) graph: structural v0 + six edge families.
 
     provider: object with encode_images_cached / encode_texts_cached /
     crop_text_cos-like helpers; None -> only geometry/text-free edges.
+    feature_prefix scopes provider cache keys to THIS image (candidate ids
+    repeat across images; without a prefix the provider cache would serve
+    another image's crop features).
     """
     import numpy as np
 
@@ -179,7 +183,7 @@ def build_full_graph(
         crop_items = []
         for cand in g.by_kind(NodeKind.CANDIDATE):
             cp = crop_pil(image, cand.payload.get("bbox"))
-            crop_items.append((cand.id, cp))
+            crop_items.append((feature_prefix + cand.id, cp))
         crop_feats = provider.encode_images_cached(crop_items)
         txt_feats = provider.encode_texts_cached([class_name])
         clip_cos = {cid: float(np.dot(crop_feats[cid], txt_feats[class_name]))
@@ -219,7 +223,8 @@ def build_full_graph(
         phrases = SCENE_PHRASES if scene_phrases is None else scene_phrases
         if phrases:
             txt = provider.encode_texts_cached(phrases)
-            img_feat = provider.encode_images_cached([("__global__", image)])["__global__"]
+            gkey = feature_prefix + "__global__"
+            img_feat = provider.encode_images_cached([(gkey, image)])[gkey]
             scene_scores = {p: float(np.dot(img_feat, txt[p])) for p in phrases}
             crop_image_cos = {
                 c.id: float(np.dot(crop_feats[c.id], img_feat))

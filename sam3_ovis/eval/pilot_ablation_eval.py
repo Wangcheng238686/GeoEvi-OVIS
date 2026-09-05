@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eval.run_ablation_eval import (gt_masks_by_image, paired_bootstrap,  # noqa: E402
-                                    per_image_aps, load_jsonl)
+                                    per_image_maps, load_jsonl)
 from eval.score_eval import (compute_diagnostics, evaluate_dataset,  # noqa: E402
                              load_gt_coco)
 
@@ -39,7 +39,7 @@ for v in ["A0", "A1", "A2",
         preds_by_img.setdefault(p["image_id"], []).append(p)
     s, _ = evaluate_dataset(sub, preds)
     d = compute_diagnostics(sub, preds)
-    ap_by[v] = per_image_aps(gt_masks, preds_by_img)
+    ap_by[v] = per_image_maps(gt_masks, preds_by_img)
     pi = sum(ap_by[v].values()) / max(len(ap_by[v]), 1)
     res[v] = pi
     print(f"{v:14s} mAP={s['segm/mAP']:.4f} AP50={s['segm/mAP_50']:.4f} "

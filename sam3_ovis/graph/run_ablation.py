@@ -111,14 +111,12 @@ def standard_nms(dets: List[dict], iou_thr: float = NMS_IOU) -> List[dict]:
 # ---------------------------------------------------------------------------
 
 class ImageContext:
-    def __init__(self, items, image, provider):
-        from graph.provider import RemoteCLIPProvider  # noqa: F401 (type only)
-
+    def __init__(self, items, image, provider, key_prefix=""):
         self.image = image
         self.masks, self.bboxes = {}, {}
         crop_items = []
         for i, it in enumerate(items):
-            key = f"c{i}"
+            key = f"{key_prefix}c{i}"
             it["key"] = key
             self.masks[key] = _rle_arr(it["rle"])
             self.bboxes[key] = _rle_bbox(it["rle"])
@@ -154,11 +152,13 @@ def cap_rivals(items, own_cat_id, topk=RIVAL_TOPK):
 # graph variant runner (graph built ONCE per (image, class))
 # ---------------------------------------------------------------------------
 
-def run_graph_variants(pool_img, cat_id, ctx: ImageContext, provider, prior):
+def run_graph_variants(pool_img, cat_id, ctx: ImageContext, provider, prior,
+                       feature_prefix=""):
     """Returns {variant: [detections]} for A2 and the four A3 variants."""
     from graph.builder import build_full_graph
     from graph.completeness import compute_completeness
     from graph.edges import competing_classes
+    from graph.schema import EdgeKind
     from graph.message_passing import (merge_duplicate_clusters,
                                        propagate_reliability, rank_candidates)
 
@@ -180,7 +180,8 @@ def run_graph_variants(pool_img, cat_id, ctx: ImageContext, provider, prior):
              "bbox": ctx.bboxes[d["key"]]} for d in own],
         image=ctx.image, image_size=(ctx.image.height, ctx.image.width),
         other_candidates=rivals, text_sim=text_sim,
-        prior=prior, provider=provider)
+        prior=prior, provider=provider,
+        feature_prefix=feature_prefix)
 
     compute_completeness(g)          # populates g.attrs["completeness"]
     rel = propagate_reliability(g)   # keys already carry the cand: prefix
@@ -197,24 +198,45 @@ def run_graph_variants(pool_img, cat_id, ctx: ImageContext, provider, prior):
         mat = np.stack([masks[i] for i in order])
         from graph.message_passing import pairwise_iou_matrix
         iou_mat = pairwise_iou_matrix(mat)
-        iou_lut = {(a, b): float(iou_mat[i, j])
+        iou_lut = {tuple(sorted((a, b))): float(iou_mat[i, j])
                    for i, a in enumerate(order)
                    for j, b in enumerate(order) if j > i}
     else:
         iou_lut = {}
 
     def iou_fn(a, b):
-        pair = (a, b) if a < b else (b, a)
-        return iou_lut.get(pair, 0.0)
+        return iou_lut.get(tuple(sorted((a, b))), 0.0)
 
     clusters = build_duplicate_clusters(g, iou_fn)
 
     out, meta = rank_candidates(g, score_clusters(g, clusters, rel), rel)
     results = {"A2": [{"score": d["final_score"], "rle": d["mask_rle"]}
                       for d in out]}
-    # A3: same graph + same clusters, component switched off via MP weights
+    # A3: same graph + same clusters, one component removed at a time.
+    # -competition removes the component ENTIRELY: COMPETING/UNKNOWN edges
+    # dropped, completeness recomputed without them (its CCR arm otherwise
+    # carries competition influence into the risk modulation), MP penalty
+    # zeroed; the full graph is restored afterwards.
+    edges_full = list(g.edges)
+    completeness_full = dict(g.attrs.get("completeness", {}))
+    g.edges = [e for e in g.edges if e.kind not in (
+        EdgeKind.COMPETING_CLASS, EdgeKind.UNKNOWN_CONFLICT)]
+    compute_completeness(g)
+    mp2 = replace(MP, alpha_compete=0.0)
+    saved = sys.modules["graph.message_passing"].MP
+    sys.modules["graph.message_passing"].MP = mp2
+    try:
+        r_nc = propagate_reliability(g)
+    finally:
+        sys.modules["graph.message_passing"].MP = saved
+    m_nc = score_clusters(g, clusters, r_nc)
+    ranked_nc, _ = rank_candidates(g, m_nc, r_nc)
+    results["A3-competition"] = [{"score": d["final_score"],
+                                  "rle": d["mask_rle"]} for d in ranked_nc]
+    g.edges = edges_full
+    g.attrs["completeness"] = completeness_full
+
     switches = {
-        "A3-competition": {"alpha_compete": 0.0},
         "A3-context": {"alpha_context": 0.0},
         "A3-scene": {"alpha_scene": 0.0},
     }
@@ -311,7 +333,9 @@ def main():
             from graph.edges import clear_rle_cache
 
             clear_rle_cache()  # per-image decode cache (id-keyed)
-            ctx = ImageContext(items, image, provider)
+            provider.clear_image_cache()  # image-scoped feature cache
+            ctx = ImageContext(items, image, provider,
+                               key_prefix=f"img{img_id}/")
 
             for cat_id in cat_ids:
                 # A0 / A1: pool post-processing (no graph)
@@ -325,7 +349,8 @@ def main():
                                [d for d in items if d["cat_id"] == cat_id])],
                 }
                 graph_out = run_graph_variants(items, cat_id, ctx,
-                                               provider, prior)
+                                               provider, prior,
+                                               feature_prefix=f"img{img_id}/")
                 variants_out.update(graph_out)
                 cat_name = gt.loadCats(cat_id)[0]["name"]
                 for variant, dets in variants_out.items():

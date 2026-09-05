@@ -74,50 +74,66 @@ def gt_masks_by_image(gt):
     return out
 
 
-def per_image_aps(gt_masks, preds_by_image):
-    """Per-image micro AP over classes (IoU 0.5, all-point). Returns
-    {image_id: ap} for images with >=1 GT instance."""
-    from pycocotools import mask as mask_util
+IOU_THRESHOLDS = [round(0.5 + 0.05 * k, 2) for k in range(10)]
 
+
+def per_image_maps(gt_masks, preds):
+    """Per-image micro mAP@[.50:.95] over classes (all-point PR per
+    threshold, averaged over the 10 COCO thresholds). Accepts a flat
+    prediction list or a pre-grouped {image_id: [dets]}.
+
+    Images WITH GT but empty/failed predictions score 0.0 (counted — a
+    complete miss is exactly what completeness-sensitive comparisons must
+    see). Images with no GT are skipped (undefined)."""
+    if isinstance(preds, list):
+        grouped = defaultdict(list)
+        for p in preds:
+            grouped[p["image_id"]].append(p)
+        preds = grouped
     aps = {}
     for img_id, gt_list in gt_masks.items():
-        dets = preds_by_image.get(img_id, [])
+        scored = sorted(preds.get(img_id, []), key=lambda d: -d["score"])
         if not gt_list:
             continue
-        scored = sorted(dets, key=lambda d: -d["score"])
-        matched = [False] * len(gt_list)
-        tp, fp = [], []
-        for d in scored:
-            m = _rle_arr(d["segmentation"]).astype(bool)
-            best_iou, best_j = 0.0, -1
-            for j, (cid, gm) in enumerate(gt_list):
-                if cid != d["category_id"] or matched[j]:
-                    continue
-                inter = int((m & gm).sum())
-                if inter == 0:
-                    continue
-                iou = inter / float((m | gm).sum())
-                if iou > best_iou:
-                    best_iou, best_j = iou, j
-            if best_iou >= MATCH_IOU:
-                matched[best_j] = True
-                tp.append(1)
-                fp.append(0)
-            else:
-                tp.append(0)
-                fp.append(1)
-        n_pos = len(gt_list)
-        if n_pos == 0 or not (tp or fp):
+        if not scored:
+            aps[img_id] = 0.0
             continue
-        ctp, cfp = np.cumsum(tp), np.cumsum(fp)
-        recall = ctp / max(n_pos, 1)
-        precision = ctp / np.maximum(ctp + cfp, 1)
-        mrec = np.concatenate(([0.0], recall, [1.0]))
-        mpre = np.concatenate(([0.0], precision, [0.0]))
-        for i in range(len(mpre) - 2, -1, -1):
-            mpre[i] = max(mpre[i], mpre[i + 1])
-        idx = np.where(mrec[1:] != mrec[:-1])[0]
-        aps[img_id] = float(np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1]))
+        dmasks = [_rle_arr(d["segmentation"]).astype(bool) for d in scored]
+        n_pos = len(gt_list)
+        ap_t = []
+        for thr in IOU_THRESHOLDS:
+            matched = [False] * n_pos
+            tp, fp = [], []
+            for di, d in enumerate(scored):
+                m = dmasks[di]
+                best_iou, best_j = 0.0, -1
+                for j, (cid, gm) in enumerate(gt_list):
+                    if cid != d["category_id"] or matched[j]:
+                        continue
+                    inter = int((m & gm).sum())
+                    if inter == 0:
+                        continue
+                    iou = inter / float((m | gm).sum())
+                    if iou > best_iou:
+                        best_iou, best_j = iou, j
+                if best_iou >= thr:
+                    matched[best_j] = True
+                    tp.append(1)
+                    fp.append(0)
+                else:
+                    tp.append(0)
+                    fp.append(1)
+            ctp, cfp = np.cumsum(tp), np.cumsum(fp)
+            recall = ctp / n_pos
+            precision = ctp / np.maximum(ctp + cfp, 1)
+            mrec = np.concatenate(([0.0], recall, [1.0]))
+            mpre = np.concatenate(([0.0], precision, [0.0]))
+            for i in range(len(mpre) - 2, -1, -1):
+                mpre[i] = max(mpre[i], mpre[i + 1])
+            idx = np.where(mrec[1:] != mrec[:-1])[0]
+            ap_t.append(float(np.sum((mrec[idx + 1] - mrec[idx])
+                                     * mpre[idx + 1])))
+        aps[img_id] = float(np.mean(ap_t))
     return aps
 
 
@@ -183,7 +199,7 @@ def main():
                   f"micro={r['recall_micro']:.4f} n={r['n_preds']}")
 
         # paired bootstrap on per-image AP
-        ap_by = {v: per_image_aps(gt_masks, preds_by_variant[v])
+        ap_by = {v: per_image_maps(gt_masks, preds_by_variant[v])
                  for v in preds_by_variant}
         table[ds]["bootstrap"] = paired_bootstrap(ap_by, list(gt_masks.keys()))
         for pair, st in table[ds]["bootstrap"].items():

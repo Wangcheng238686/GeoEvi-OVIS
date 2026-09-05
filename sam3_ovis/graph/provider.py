@@ -107,6 +107,11 @@ class RemoteCLIPProvider:
         for i in range(0, len(seq), n):
             yield seq[i:i + n]
 
+    def clear_image_cache(self) -> None:
+        """Drop cached image features. Call between images when keys are
+        reused across images; safer to also scope keys per image."""
+        self._img_cache.clear()
+
     def encode_images_cached(self, items: Sequence) -> Dict[str, np.ndarray]:
         """items: [(key, PIL image)] -> {key: unit vec}."""
         todo = [(k, im) for k, im in items if k not in self._img_cache]
