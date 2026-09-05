@@ -275,53 +275,103 @@ def main():
 
     out_dir = log_root / "ablation" / args.dataset
     out_dir.mkdir(parents=True, exist_ok=True)
-    files = {v: open(out_dir / f"{v}.jsonl", "w") for v in VARIANTS}
+    # resume: per-variant done-sets so a killed run never duplicates or
+    # loses an image (variants are deterministic given the pool)
+    done = {v: set() for v in VARIANTS}
+    for v in VARIANTS:
+        p = out_dir / f"{v}.jsonl"
+        if p.exists():
+            with open(p) as f:
+                for line in f:
+                    try:
+                        done[v].add(json.loads(line)["image_id"])
+                    except json.JSONDecodeError:
+                        break
+    todo_ids = [i for i in img_ids
+                if any(i not in done[v] for v in VARIANTS)]
+    print(f"[{args.dataset}] {len(img_ids)} imgs, "
+          f"{len(img_ids) - len(todo_ids)} already done, "
+          f"{len(todo_ids)} to (re)process", flush=True)
+
+    files = {v: open(out_dir / f"{v}.jsonl", "a") for v in VARIANTS}
+    error_log = out_dir / "error_images.jsonl"
 
     provider = RemoteCLIPProvider()
     prior_path = root / "priors" / "cooccurrence_iSAID.json"
     prior = json.load(open(prior_path)) if prior_path.exists() else None
 
     t0 = time.time()
-    for k, img_id in enumerate(img_ids):
-        from graph.edges import clear_rle_cache
-
-        clear_rle_cache()  # per-image decode cache (id-keyed on rle dicts)
+    n_new = 0
+    for k, img_id in enumerate(todo_ids):
         info = gt.loadImgs(img_id)[0]
-        image = Image.open(root / spec.images_dir / info["file_name"]) \
-            .convert("RGB")
-        items = pool[img_id]
-        ctx = ImageContext(items, image, provider)
+        try:
+            image = Image.open(root / spec.images_dir / info["file_name"]) \
+                .convert("RGB")
+            items = pool[img_id]
+            from graph.edges import clear_rle_cache
 
-        for cat_id in cat_ids:
-            # A0 / A1: pool post-processing (no graph)
-            variants_out = {
-                "A0": [{"score": d["score"], "rle": d["rle"]}
-                       for d in standard_nms(
-                           [d for d in items if d["cat_id"] == cat_id
-                            and d["score"] >= A0_THRESHOLD])],
-                "A1": [{"score": norm_text(d["score"]), "rle": d["rle"]}
-                       for d in standard_nms(
-                           [d for d in items if d["cat_id"] == cat_id])],
-            }
-            graph_out = run_graph_variants(items, cat_id, ctx, provider, prior)
-            variants_out.update(graph_out)
-            for variant, dets in variants_out.items():
+            clear_rle_cache()  # per-image decode cache (id-keyed)
+            ctx = ImageContext(items, image, provider)
+
+            for cat_id in cat_ids:
+                # A0 / A1: pool post-processing (no graph)
+                variants_out = {
+                    "A0": [{"score": d["score"], "rle": d["rle"]}
+                           for d in standard_nms(
+                               [d for d in items if d["cat_id"] == cat_id
+                                and d["score"] >= A0_THRESHOLD])],
+                    "A1": [{"score": norm_text(d["score"]), "rle": d["rle"]}
+                           for d in standard_nms(
+                               [d for d in items if d["cat_id"] == cat_id])],
+                }
+                graph_out = run_graph_variants(items, cat_id, ctx,
+                                               provider, prior)
+                variants_out.update(graph_out)
                 cat_name = gt.loadCats(cat_id)[0]["name"]
-                for d in dets:
-                    files[variant].write(json.dumps({
-                        "image_id": img_id, "category_id": int(cat_id),
-                        "category_name": cat_name,
-                        "score": d["score"], "segmentation": d["rle"],
-                    }) + "\n")
-        if (k + 1) % 25 == 0:
+                for variant, dets in variants_out.items():
+                    if img_id in done[variant]:
+                        continue
+                    for d in dets:
+                        files[variant].write(json.dumps({
+                            "image_id": img_id, "category_id": int(cat_id),
+                            "category_name": cat_name,
+                            "score": d["score"], "segmentation": d["rle"],
+                        }) + "\n")
+        except torch.cuda.OutOfMemoryError:
+            from graph.edges import clear_rle_cache
+
+            clear_rle_cache()
+            torch.cuda.empty_cache()
+            with open(error_log, "a") as fo:
+                fo.write(json.dumps({"image_id": img_id,
+                                     "error": "cuda_oom"}) + "\n")
+            print(f"  OOM skipped img {img_id}", flush=True)
+            n_new += 1
+            continue
+        except Exception as e:  # noqa: BLE001
+            from graph.edges import clear_rle_cache
+
+            clear_rle_cache()
+            torch.cuda.empty_cache()
+            with open(error_log, "a") as fo:
+                fo.write(json.dumps({"image_id": img_id,
+                                     "error": repr(e)[:200]}) + "\n")
+            print(f"  error skipped img {img_id}: {repr(e)[:120]}", flush=True)
+            n_new += 1
+            continue
+        for v in VARIANTS:
+            done[v].add(img_id)
+        n_new += 1
+        if n_new % 25 == 0:
             for f in files.values():
                 f.flush()
             el = time.time() - t0
-            print(f"  {k + 1}/{len(img_ids)} imgs, {el / (k + 1):.2f}s/img, "
-                  f"ETA {el / ((k + 1) / len(img_ids)) - el:.0f}s", flush=True)
+            print(f"  {k + 1}/{len(todo_ids)} imgs, {el / n_new:.2f}s/img, "
+                  f"ETA {el / (n_new / len(todo_ids)) - el:.0f}s", flush=True)
+            torch.cuda.empty_cache()
     for f in files.values():
         f.close()
-    print(f"[{args.dataset}] ablation done: {len(img_ids)} imgs in "
+    print(f"[{args.dataset}] ablation done: {n_new} imgs in "
           f"{time.time() - t0:.0f}s -> {out_dir}", flush=True)
 
 
