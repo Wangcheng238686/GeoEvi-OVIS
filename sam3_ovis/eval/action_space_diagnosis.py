@@ -128,7 +128,14 @@ def main():
             if img_id not in pool:
                 continue
             h, w = h_w[img_id]
-            kept, kept_m = class_nms(pool[img_id])
+            # v3 §3 protocol: class-wise NMS (joint NMS would let the
+            # dominant class suppress minority-class candidates)
+            kept, kept_m = [], []
+            for cid in {d["category_id"] for d in pool[img_id]}:
+                k, km = class_nms([d for d in pool[img_id]
+                                   if d["category_id"] == cid])
+                kept.extend(k)
+                kept_m.extend(km)
             gt_list = gt.loadAnns(gt.getAnnIds(imgIds=[img_id]))
             gt_m = [(a["category_id"], _arr(a["segmentation"], h, w))
                     for a in gt_list]

@@ -1,0 +1,272 @@
+{
+ "NWPU": {
+  "n_gt": 2661,
+  "candidates": {
+   "wrong_class": 2610,
+   "background": 82978,
+   "tp": 2154,
+   "partial_overlap": 1707
+  },
+  "gt": {
+   "covered_same_class": 2112,
+   "recoverable_by_switch": 326,
+   "true_miss": 179,
+   "partial_miss": 44
+  },
+  "recall_now": 0.7937,
+  "ideal_ceiling_with_switch": 0.9162,
+  "headroom_share_of_misses": 0.5938,
+  "top_confusion_pairs": [
+   [
+    [
+     "vehicle",
+     "airplane"
+    ],
+    385
+   ],
+   [
+    [
+     "basketball_court",
+     "tennis_court"
+    ],
+    356
+   ],
+   [
+    [
+     "ground_track_field",
+     "tennis_court"
+    ],
+    332
+   ],
+   [
+    [
+     "ground_track_field",
+     "baseball_diamond"
+    ],
+    304
+   ],
+   [
+    [
+     "vehicle",
+     "ship"
+    ],
+    175
+   ],
+   [
+    [
+     "GT:baseball_diamond",
+     "ground_track_field"
+    ],
+    171
+   ],
+   [
+    [
+     "basketball_court",
+     "baseball_diamond"
+    ],
+    170
+   ],
+   [
+    [
+     "harbor",
+     "ship"
+    ],
+    167
+   ],
+   [
+    [
+     "basketball_court",
+     "ground_track_field"
+    ],
+    138
+   ],
+   [
+    [
+     "tennis_court",
+     "ground_track_field"
+    ],
+    136
+   ]
+  ]
+ },
+ "SOTA": {
+  "n_gt": 29159,
+  "candidates": {
+   "wrong_class": 17445,
+   "background": 67223,
+   "partial_overlap": 7069,
+   "tp": 16981
+  },
+  "gt": {
+   "covered_same_class": 16930,
+   "true_miss": 10202,
+   "recoverable_by_switch": 1361,
+   "partial_miss": 666
+  },
+  "recall_now": 0.5806,
+  "ideal_ceiling_with_switch": 0.6273,
+  "headroom_share_of_misses": 0.1113,
+  "top_confusion_pairs": [
+   [
+    [
+     "large-vehicle",
+     "small-vehicle"
+    ],
+    7172
+   ],
+   [
+    [
+     "large-vehicle",
+     "ship"
+    ],
+    2023
+   ],
+   [
+    [
+     "small-vehicle",
+     "ship"
+    ],
+    1330
+   ],
+   [
+    [
+     "harbor",
+     "ship"
+    ],
+    992
+   ],
+   [
+    [
+     "small-vehicle",
+     "large-vehicle"
+    ],
+    936
+   ],
+   [
+    [
+     "large-vehicle",
+     "plane"
+    ],
+    866
+   ],
+   [
+    [
+     "airport",
+     "plane"
+    ],
+    659
+   ],
+   [
+    [
+     "bridge",
+     "harbor"
+    ],
+    528
+   ],
+   [
+    [
+     "GT:small-vehicle",
+     "large-vehicle"
+    ],
+    371
+   ],
+   [
+    [
+     "small-vehicle",
+     "plane"
+    ],
+    346
+   ]
+  ]
+ },
+ "FAST": {
+  "n_gt": 43243,
+  "candidates": {
+   "wrong_class": 114813,
+   "background": 424172,
+   "tp": 34245,
+   "partial_overlap": 22491
+  },
+  "gt": {
+   "covered_same_class": 34129,
+   "recoverable_by_switch": 7073,
+   "true_miss": 1301,
+   "partial_miss": 740
+  },
+  "recall_now": 0.7892,
+  "ideal_ceiling_with_switch": 0.9528,
+  "headroom_share_of_misses": 0.7761,
+  "top_confusion_pairs": [
+   [
+    [
+     "other-vehicle",
+     "Small-Car"
+    ],
+    14696
+   ],
+   [
+    [
+     "other-vehicle",
+     "Van"
+    ],
+    13769
+   ],
+   [
+    [
+     "Van",
+     "Small-Car"
+    ],
+    13142
+   ],
+   [
+    [
+     "Small-Car",
+     "Van"
+    ],
+    11954
+   ],
+   [
+    [
+     "other-vehicle",
+     "Dump-Truck"
+    ],
+    2502
+   ],
+   [
+    [
+     "Small-Car",
+     "Dump-Truck"
+    ],
+    2304
+   ],
+   [
+    [
+     "Van",
+     "Dump-Truck"
+    ],
+    2287
+   ],
+   [
+    [
+     "Bus",
+     "Van"
+    ],
+    2143
+   ],
+   [
+    [
+     "Trailer",
+     "Van"
+    ],
+    1920
+   ],
+   [
+    [
+     "Cargo-Truck",
+     "Van"
+    ],
+    1832
+   ]
+  ]
+ }
+}
