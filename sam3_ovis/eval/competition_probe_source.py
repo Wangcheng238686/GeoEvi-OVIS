@@ -22,9 +22,12 @@ Run:  source sam3_ovis/scripts/load_environment.sh
 """
 
 import argparse
+import faulthandler
 import json
 import os
 import sys
+
+faulthandler.dump_traceback_later(180, repeat=True)  # watchdog stack dumps
 from collections import defaultdict
 from pathlib import Path
 
@@ -44,28 +47,61 @@ NMS_IOU = 0.5
 RIVAL_IOU = 0.5
 
 
-def _arr(rle):
-    r = dict(rle)
-    if isinstance(r["counts"], str):
-        r["counts"] = r["counts"].encode("utf-8")
-    return mask_util.decode(r).astype(bool)
+def _arr(seg, h=None, w=None):
+    """Decode RLE (dict) or polygon (list, with h/w) to a bool mask."""
+    if isinstance(seg, dict):
+        r = dict(seg)
+        if isinstance(r["counts"], str):
+            r["counts"] = r["counts"].encode("utf-8")
+        return mask_util.decode(r).astype(bool)
+    objs = seg if isinstance(seg[0], list) else [seg]
+    return mask_util.decode(mask_util.merge(
+        mask_util.frPyObjects(objs, h, w))).astype(bool)
+
+
+def _tight_bbox(m):
+    ys, xs = np.any(m, axis=1), np.any(m, axis=0)
+    if not ys.any():
+        return None
+    return (int(np.where(xs)[0][0]), int(np.where(ys)[0][0]),
+            int(np.where(xs)[0][-1]) + 1, int(np.where(ys)[0][-1]) + 1)
+
+
+def _iou_cropped(m1, b1, m2, b2):
+    """Exact IoU on the bbox-intersection slice (both masks, same canvas)."""
+    ix1, iy1 = max(b1[0], b2[0]), max(b1[1], b2[1])
+    ix2, iy2 = min(b1[2], b2[2]), min(b1[3], b2[3])
+    if ix1 >= ix2 or iy1 >= iy2:
+        return 0.0
+    inter = int((m1[iy1:iy2, ix1:ix2] & m2[iy1:iy2, ix1:ix2]).sum())
+    if inter == 0:
+        return 0.0
+    return inter / float(int(m1.sum()) + int(m2.sum()) - inter)
 
 
 def class_nms(dets, iou_thr=NMS_IOU):
-    """dets carry a decoded bool 'mask' (SAM3 output in this probe)."""
+    """dets carry a decoded bool 'mask' (SAM3 output in this probe).
+    bbox prefilter + intersection-slice IoU (exact, much faster on dense
+    iSAID images than full-canvas ops)."""
     order = sorted(dets, key=lambda d: -d["score"])
-    kept, kept_m = [], []
+    kept, kept_m, kept_b = [], [], []
     for d in order:
         m = d["mask"]
+        b = _tight_bbox(m)
+        if b is None:
+            continue
         dup = False
-        for km in kept_m:
-            inter = int((m & km).sum())
-            if inter and inter / float((m | km).sum()) >= iou_thr:
+        for km, kb in zip(kept_m, kept_b):
+            if (b[0] + b[2] <= kb[0] or kb[0] + kb[2] <= b[0]
+                    or b[1] + b[3] <= kb[1] or kb[1] + kb[3] <= b[1]):
+                continue
+            if _iou_cropped(m, b, km, kb) >= iou_thr:
                 dup = True
                 break
         if not dup:
             kept.append(d)
             kept_m.append(m)
+            kept_b.append(b)
     return kept, kept_m
 
 
@@ -92,11 +128,12 @@ def main():
     cat_names = {c["id"]: c["name"] for c in gt.loadCats(cat_ids)}
 
     rng = np.random.default_rng(SEED)
-    img_ids = sorted(int(i) for i in gt.getImgIds() if i in
-                     set(gt.getAnnIds() and [a["image_id"]
-                         for a in gt.dataset["annotations"]]))
+    valid_imgs = set(gt.getAnnIds() and [a["image_id"]
+                     for a in gt.dataset["annotations"]])
+    img_ids = sorted(int(i) for i in gt.getImgIds() if i in valid_imgs)
     sample = sorted(rng.choice(img_ids, size=min(args.n_images, len(img_ids)),
                                replace=False).tolist())
+    print(f"[probe] sample ready: {len(sample)} imgs", flush=True)
     manifest = {"seed": SEED, "n": len(sample), "image_ids": sample}
     Path(os.environ.get("SAM3_OVIS_LOG_ROOT", "/tmp")) \
         .mkdir(parents=True, exist_ok=True)
@@ -106,8 +143,10 @@ def main():
 
     all_names = sorted({c["name"] for c in gt.loadCats(cat_ids)})
 
+    print("[probe] building SAM3 model...", flush=True)
     model = build_sam3_image_model(
         checkpoint_path=os.environ["SAM3_CKPT"], load_from_HF=False)
+    print("[probe] SAM3 model ready", flush=True)
     processor = Sam3Processor(model, confidence_threshold=THRESHOLDS.pool_floor)
     provider = RemoteCLIPProvider(device="cpu" if cpu_mode else None)
     txt = provider.encode_texts_cached(all_names)
@@ -179,11 +218,8 @@ def main():
                 gt_m.append((a["category_id"],
                              mask_util.decode(r).astype(bool)))
             else:
-                objs = seg if isinstance(seg[0], list) else [seg]
-                gt_m.append((a["category_id"], _arr({
-                    "size": [info["height"], info["width"]],
-                    "counts": mask_util.frPyObjects(
-                        objs, info["height"], info["width"])})))
+                gt_m.append((a["category_id"],
+                             _arr(seg, info["height"], info["width"])))
 
         for i, (d, m) in enumerate(zip(kept, kept_m)):
             best_same = best_cross = 0.0
@@ -207,13 +243,8 @@ def main():
                     continue
                 if bb[i] is None or bb[j] is None:
                     continue
-                if (bb[i][0] + bb[i][2] <= bb[j][0]
-                        or bb[j][0] + bb[j][2] <= bb[i][0]
-                        or bb[i][1] + bb[i][3] <= bb[j][1]
-                        or bb[j][1] + bb[j][3] <= bb[i][1]):
-                    continue
-                inter = int((m & m2).sum())
-                if inter and inter / float((m | m2).sum()) >= RIVAL_IOU:
+                iou = _iou_cropped(m, bb[i], m2, bb[j])
+                if iou >= RIVAL_IOU:
                     rival_classes.add(d2["cat_name"])
             f = feats[d["key"]]
             z_own = float(np.dot(f, txt[d["cat_name"]]))
