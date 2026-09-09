@@ -125,7 +125,13 @@ def main():
         n_gt = 0
 
         for img_id in gt.getImgIds():
+            # images WITHOUT predictions still count: every GT instance on
+            # them is a true miss (previous version skipped them and
+            # under-counted SOTA by 88 / FAST by 15 GT)
             if img_id not in pool:
+                anns = gt.loadAnns(gt.getAnnIds(imgIds=[img_id]))
+                gt_stats["true_miss"] += len(anns)
+                n_gt += len(anns)
                 continue
             h, w = h_w[img_id]
             # v3 §3 protocol: class-wise NMS (joint NMS would let the

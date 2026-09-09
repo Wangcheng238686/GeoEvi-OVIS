@@ -82,7 +82,9 @@ def main():
     from sam3.model.sam3_image_processor import Sam3Processor
     from sam3.model_builder import build_sam3_image_model
 
-    torch.autocast("cuda", dtype=torch.bfloat16).__enter__()
+    cpu_mode = not torch.cuda.is_available()
+    if not cpu_mode:
+        torch.autocast("cuda", dtype=torch.bfloat16).__enter__()
     spec = DATASETS["iSAID"]
     root = Path(os.environ["SAM3_OVIS_DATA_ROOT"])
     gt = COCO(str(root / spec.val_json))
@@ -107,7 +109,7 @@ def main():
     model = build_sam3_image_model(
         checkpoint_path=os.environ["SAM3_CKPT"], load_from_HF=False)
     processor = Sam3Processor(model, confidence_threshold=THRESHOLDS.pool_floor)
-    provider = RemoteCLIPProvider()
+    provider = RemoteCLIPProvider(device="cpu" if cpu_mode else None)
     txt = provider.encode_texts_cached(all_names)
 
     # per-candidate records
