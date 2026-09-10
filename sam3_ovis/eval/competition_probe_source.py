@@ -186,7 +186,16 @@ def main():
                 m = state["masks"][j, 0].detach().cpu().numpy().astype(bool)
                 det["mask"] = m
                 kept.append(det)
-        kept, kept_m = class_nms(kept)
+        # v3 §3 protocol: class-wise NMS (joint NMS would let dominant-class
+        # candidates suppress minority-class ones — this produced the
+        # zero-rival artifact in the first iSAID probe). Build into a FRESH
+        # list; never mutate the list being iterated.
+        kept_nms, kept_nms_m = [], []
+        for cid in sorted({d["cat_id"] for d in kept}):
+            kn, kmn = class_nms([d for d in kept if d["cat_id"] == cid])
+            kept_nms.extend(kn)
+            kept_nms_m.extend(kmn)
+        kept, kept_m = kept_nms, kept_nms_m
 
         # rival structure among kept (cross-class, IoU >= 0.5)
         bb = [None] * len(kept)

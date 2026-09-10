@@ -1,0 +1,70 @@
+{
+ "dataset": "NWPU",
+ "table": {
+  "d0.0_l0.5": {
+   "wrong_suppressed": 12794,
+   "wrong_total": 22140,
+   "tp_suppressed": 199,
+   "tp_total": 1214,
+   "wrong_rate": 0.5779,
+   "tp_rate": 0.1639
+  },
+  "d0.0_l1.0": {
+   "wrong_suppressed": 12794,
+   "wrong_total": 22140,
+   "tp_suppressed": 199,
+   "tp_total": 1214,
+   "wrong_rate": 0.5779,
+   "tp_rate": 0.1639
+  },
+  "d0.0_l2.0": {
+   "wrong_suppressed": 12794,
+   "wrong_total": 22140,
+   "tp_suppressed": 199,
+   "tp_total": 1214,
+   "wrong_rate": 0.5779,
+   "tp_rate": 0.1639
+  },
+  "d0.0_l4.0": {
+   "wrong_suppressed": 12794,
+   "wrong_total": 22140,
+   "tp_suppressed": 199,
+   "tp_total": 1214,
+   "wrong_rate": 0.5779,
+   "tp_rate": 0.1639
+  },
+  "d0.05_l0.5": {
+   "wrong_suppressed": 3223,
+   "wrong_total": 22140,
+   "tp_suppressed": 10,
+   "tp_total": 1214,
+   "wrong_rate": 0.1456,
+   "tp_rate": 0.0082
+  },
+  "d0.05_l1.0": {
+   "wrong_suppressed": 3223,
+   "wrong_total": 22140,
+   "tp_suppressed": 10,
+   "tp_total": 1214,
+   "wrong_rate": 0.1456,
+   "tp_rate": 0.0082
+  },
+  "d0.05_l2.0": {
+   "wrong_suppressed": 3223,
+   "wrong_total": 22140,
+   "tp_suppressed": 10,
+   "tp_total": 1214,
+   "wrong_rate": 0.1456,
+   "tp_rate": 0.0082
+  },
+  "d0.05_l4.0": {
+   "wrong_suppressed": 3223,
+   "wrong_total": 22140,
+   "tp_suppressed": 10,
+   "tp_total": 1214,
+   "wrong_rate": 0.1456,
+   "tp_rate": 0.0082
+  }
+ },
+ "n_recs": 23354
+}

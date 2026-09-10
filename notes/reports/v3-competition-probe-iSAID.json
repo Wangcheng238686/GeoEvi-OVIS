@@ -1,0 +1,71 @@
+{
+ "n_images": 300,
+ "n_recs": 9531,
+ "table": {
+  "d0.0_l0.5": {
+   "wrong_suppressed": 2547,
+   "wrong_total": 3849,
+   "tp_suppressed": 1377,
+   "tp_total": 3212,
+   "wrong_suppress_rate": 0.6617,
+   "tp_suppress_rate": 0.4287
+  },
+  "d0.0_l1.0": {
+   "wrong_suppressed": 2547,
+   "wrong_total": 3849,
+   "tp_suppressed": 1377,
+   "tp_total": 3212,
+   "wrong_suppress_rate": 0.6617,
+   "tp_suppress_rate": 0.4287
+  },
+  "d0.0_l2.0": {
+   "wrong_suppressed": 2547,
+   "wrong_total": 3849,
+   "tp_suppressed": 1377,
+   "tp_total": 3212,
+   "wrong_suppress_rate": 0.6617,
+   "tp_suppress_rate": 0.4287
+  },
+  "d0.0_l4.0": {
+   "wrong_suppressed": 2547,
+   "wrong_total": 3849,
+   "tp_suppressed": 1377,
+   "tp_total": 3212,
+   "wrong_suppress_rate": 0.6617,
+   "tp_suppress_rate": 0.4287
+  },
+  "d0.05_l0.5": {
+   "wrong_suppressed": 467,
+   "wrong_total": 3849,
+   "tp_suppressed": 43,
+   "tp_total": 3212,
+   "wrong_suppress_rate": 0.1213,
+   "tp_suppress_rate": 0.0134
+  },
+  "d0.05_l1.0": {
+   "wrong_suppressed": 467,
+   "wrong_total": 3849,
+   "tp_suppressed": 43,
+   "tp_total": 3212,
+   "wrong_suppress_rate": 0.1213,
+   "tp_suppress_rate": 0.0134
+  },
+  "d0.05_l2.0": {
+   "wrong_suppressed": 467,
+   "wrong_total": 3849,
+   "tp_suppressed": 43,
+   "tp_total": 3212,
+   "wrong_suppress_rate": 0.1213,
+   "tp_suppress_rate": 0.0134
+  },
+  "d0.05_l4.0": {
+   "wrong_suppressed": 467,
+   "wrong_total": 3849,
+   "tp_suppressed": 43,
+   "tp_total": 3212,
+   "wrong_suppress_rate": 0.1213,
+   "tp_suppress_rate": 0.0134
+  }
+ },
+ "note": "rival z uses the rival class TEXT evaluated on this crop (design \u00a73)"
+}
