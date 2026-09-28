@@ -137,7 +137,23 @@ def main():
             m, b = d["mask"], d["bbox"]
             best_same = max((_iou_cropped(m, b, gm, _tight_bbox(gm))
                              for gm in gts), default=0.0)
-            kind = "tp" if best_same >= 0.5 else "wrong"
+            # cross-class GT overlap: the candidate DOES cover an object of
+            # a different class (true wrong-class candidate per the
+            # registered definition); without it the candidate is background
+            best_cross = 0.0
+            if best_same < 0.5:
+                for (img2, cat2), gts2 in gt_masks.items():
+                    if img2 != img_id:
+                        continue
+                    for gm in gts2:
+                        if _iou_cropped(m, b, gm, _tight_bbox(gm)) > best_cross:
+                            best_cross = _iou_cropped(m, b, gm, _tight_bbox(gm))
+            if best_same >= 0.5:
+                kind = "tp"
+            elif best_cross >= 0.5:
+                kind = "wrong"
+            else:
+                kind = "background"
             rivals = []
             for cat2, d2 in rivals_by[img_id]:
                 m2, b2 = d2["mask"], d2["bbox"]
@@ -147,7 +163,7 @@ def main():
                 continue
             recs.append({"kind": kind, "u": norm_text(d["score"]),
                          "cat": cat_names[cat_id], "img": img_id,
-                         "bbox": list(b), "file": None,
+                         "bbox": list(b),
                          "rival_classes": sorted(set(rivals))})
 
     print(f"scored recs (with rivals): {len(recs)}")
@@ -199,14 +215,20 @@ def main():
                 "wrong_total": s["wrong"][1],
                 "tp_suppressed": s["tp"][0],
                 "tp_total": s["tp"][1],
+                "background_suppressed": s["background"][0],
+                "background_total": s["background"][1],
                 "wrong_rate": round(s["wrong"][0] / max(s["wrong"][1], 1), 4),
                 "tp_rate": round(s["tp"][0] / max(s["tp"][1], 1), 4),
+                "background_rate": round(s["background"][0]
+                                         / max(s["background"][1], 1), 4),
             }
             print(f"delta={delta} lambda={lam}: "
                   f"错类压低 {s['wrong'][0]}/{s['wrong'][1]}"
                   f"={table[key]['wrong_rate']:.3f} | "
                   f"TP误伤 {s['tp'][0]}/{s['tp'][1]}"
-                  f"={table[key]['tp_rate']:.3f}")
+                  f"={table[key]['tp_rate']:.3f} | "
+                  f"背景 {s['background'][0]}/{s['background'][1]}"
+                  f"={table[key]['background_rate']:.3f}")
 
     out = Path(args.out or (log_root / "competition_probe_pool.json"))
     out.write_text(json.dumps({"dataset": args.dataset, "table": table,

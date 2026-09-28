@@ -211,8 +211,18 @@ def main():
         for i, (d, m) in enumerate(zip(kept, kept_m)):
             key = f"img{img_id}/{i}"
             d["key"] = key
+            cbox = _tight_bbox(m)
+            if cbox is None:
+                d["key"] = None
+                continue
+            x1, y1, x2, y2 = cbox
+            mx, my = (x2 - x1) * 0.1, (y2 - y1) * 0.1
+            cx1 = max(0, int(x1 - mx))
+            cy1 = max(0, int(y1 - my))
+            cx2 = min(image.width, int(x2 + mx))
+            cy2 = min(image.height, int(y2 + my))
             crop_keys.append(key)
-            crop_imgs.append(image)
+            crop_imgs.append(image.crop((cx1, cy1, cx2, cy2)))
         feats = provider.encode_images_cached(list(zip(crop_keys, crop_imgs)))
 
         # GT match classification
@@ -255,6 +265,8 @@ def main():
                 iou = _iou_cropped(m, bb[i], m2, bb[j])
                 if iou >= RIVAL_IOU:
                     rival_classes.add(d2["cat_name"])
+            if d.get("key") is None or d["key"] not in feats:
+                continue
             f = feats[d["key"]]
             z_own = float(np.dot(f, txt[d["cat_name"]]))
             z_rival_max = max((float(np.dot(f, txt[rc]))
