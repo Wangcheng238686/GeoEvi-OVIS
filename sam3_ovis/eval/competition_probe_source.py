@@ -155,9 +155,13 @@ def main():
     out_json = Path(args.out or (Path(os.environ.get("SAM3_OVIS_LOG_ROOT", "/tmp"))
                                  / "competition_probe_iSAID.json"))
     recs_path = out_json.parent / "competition_probe_iSAID_records.jsonl"
+    done_path = out_json.parent / "competition_probe_iSAID_done.jsonl"
+    # completion ledger (atomic): an image is done iff it has a done line.
+    # Zero-record images (all-background) are valid completions and are
+    # recorded too, so resume never reprocesses or loses them.
     done_imgs = set()
-    if recs_path.exists():
-        with open(recs_path) as f:
+    if done_path.exists():
+        with open(done_path) as f:
             for line in f:
                 try:
                     done_imgs.add(json.loads(line)["img"])
@@ -165,6 +169,7 @@ def main():
                     break
 
     recs_f = open(recs_path, "a")
+    done_f = open(done_path, "a")
     recs = []
     for k, img_id in enumerate(sample):
         if img_id in done_imgs:
@@ -174,6 +179,7 @@ def main():
             .convert("RGB")
         state = processor.set_image(image)
 
+        n_records_this_image = 0
         kept, kept_m = [], []
         for cid in cat_ids:
             state = processor.set_text_prompt(state=state,
@@ -277,9 +283,20 @@ def main():
                    "z_own": z_own, "z_rival_max": z_rival_max,
                    "n_rival_classes": len(rival_classes)}
             recs.append(rec)
+            n_records_this_image += 1
             recs_f.write(json.dumps(rec) + "\n")
 
+        # per-image atomic completion: flush records, then done line (so a
+        # killed run never reprocesses an image, and zero-record images are
+        # recorded as valid completions)
+        recs_f.flush()
+        done_f.write(json.dumps({"img": img_id,
+                                 "n_records": n_records_this_image}) + "\n")
+        done_f.flush()
+
         if (k + 1) % 25 == 0:
+            recs_f.flush()
+            done_f.flush()
             print(f"  {k + 1}/{len(sample)} imgs, {len(recs)} scored recs",
                   flush=True)
         torch.cuda.empty_cache()

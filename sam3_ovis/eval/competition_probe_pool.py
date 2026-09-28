@@ -114,6 +114,10 @@ def main():
                 kept_m.append(m)
                 kept_b.append(b)
         kept_by_pair[(img_id, cat_id)] = kept
+    # NOTE crop protocol: candidate crops use bbox + 10% margin on BOTH
+    # domains (aligned with competition_probe_source.py); the tight-bbox
+    # crop used in the first NWPU probe run was a cross-domain protocol
+    # mismatch flagged in the 2026-09-07 audit and is fixed here.
 
     # GT masks per (image, class)
     gt_masks = defaultdict(list)
@@ -188,8 +192,12 @@ def main():
                 root / spec.images_dir / info["file_name"]).convert("RGB")
         image = img_cache[img_id]
         x, y, x2, y2 = r["bbox"]
-        crop = image.crop((x, y, min(x2, image.width),
-                           min(y2, image.height)))
+        mx, my = (x2 - x) * 0.1, (y2 - y) * 0.1
+        cx1 = max(0, int(x - mx))
+        cy1 = max(0, int(y - my))
+        cx2 = min(image.width, int(x2 + mx))
+        cy2 = min(image.height, int(y2 + my))
+        crop = image.crop((cx1, cy1, cx2, cy2))
         key = f"{img_id}/{i}"
         f = provider.encode_images_cached([(key, crop)])[key]
         r["z_own"] = float(np.dot(f, txt[r["cat"]]))
