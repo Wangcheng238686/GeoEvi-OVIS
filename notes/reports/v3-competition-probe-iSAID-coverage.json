@@ -1,0 +1,19 @@
+{
+ "records_total": 9538,
+ "images_covered": 265,
+ "images_declared": 300,
+ "images_not_processed": 35,
+ "note": "35 张图未处理（进程被外部清理于 265/300）；results JSON 的 n_images=300 为声明样本量，非完成量",
+ "kinds": {
+  "tp": 5510,
+  "wrong": 4028
+ },
+ "delta005_wrong": {
+  "suppressed": 704,
+  "total": 3859
+ },
+ "delta005_tp": {
+  "suppressed": 4,
+  "total": 3213
+ }
+}
