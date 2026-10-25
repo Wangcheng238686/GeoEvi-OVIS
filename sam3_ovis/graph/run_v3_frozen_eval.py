@@ -69,7 +69,7 @@ def phase_cache(n_groups: int, n_images: int) -> None:
     from sam3.model_builder import build_sam3_image_model
 
     from graph.t2_candidate_cache import (
-        CROP_MARGIN, NMS_IOU, POOL_FLOOR, RIVAL_IOU, SEED as DEV_SEED,
+        CROP_MARGIN, NMS_IOU, POOL_FLOOR, RIVAL_IOU,
         _iou_cropped, _tight_bbox,
     )
 
@@ -82,15 +82,21 @@ def phase_cache(n_groups: int, n_images: int) -> None:
     cat_names = {c["id"]: c["name"] for c in gt.loadCats(cat_ids)}
     name_list = [cat_names[c] for c in cat_ids]
 
+    id2pref = {im["id"]: im["file_name"].replace(".png", "").split("_")[0]
+               for im in gt.dataset["images"]}
     prefixes = defaultdict(list)
     for im in gt.dataset["images"]:
-        pref = im["file_name"].replace(".png", "").split("_")[0]
-        prefixes[pref].append(im["id"])
+        if im["id"] in id2pref:
+            prefixes[id2pref[im["id"]]].append(im["id"])
     all_prefs = sorted(prefixes.keys())
 
+    # 双重排除（explainer 2026-09-28 登记：避开 dev 组与 T1 探针暴露组）
     dev_manifest = json.load(open(log_root / "t2_cache" / "manifest.json"))
     dev_groups = set(dev_manifest["source_groups"])
-    held_out = [p for p in all_prefs if p not in dev_groups]
+    probe_ids = set(json.load(open(log_root / "probe_manifest.json"))["image_ids"])
+    probe_groups = {id2pref[i] for i in probe_ids if i in id2pref}
+    held_out = [p for p in all_prefs if p not in dev_groups
+                and p not in probe_groups]
     # 只保留有 GT 标注的组（登记口径：零 GT 图不进验证分母）
     img_anns = set(a["image_id"] for a in gt.dataset["annotations"])
     held_out = [p for p in held_out
@@ -118,11 +124,13 @@ def phase_cache(n_groups: int, n_images: int) -> None:
                                              "delta": FROZEN.delta,
                                              "lam": FROZEN.lam},
                 "excluded_dev_groups": sorted(dev_groups),
+                "excluded_probe_groups": sorted(probe_groups),
                 "source_groups": chosen, "n_images": len(val_ids),
                 "image_ids": val_ids, "code_sha": sha}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1))
     print(f"[frozen] {len(val_ids)} imgs from {len(chosen)} held-out groups "
-          f"(excluded {len(dev_groups)} dev groups), sha={sha[:12]}", flush=True)
+          f"(excluded {len(dev_groups)} dev + {len(probe_groups)} probe "
+          f"groups), sha={sha[:12]}", flush=True)
 
     model = build_sam3_image_model(
         checkpoint_path=os.environ["SAM3_CKPT"], load_from_HF=False)
@@ -244,8 +252,15 @@ def phase_cache(n_groups: int, n_images: int) -> None:
 # ---------------------------------------------------------------- score ----
 def _per_image_ap(gt: COCO, dets, img_ids) -> dict:
     """逐图 segm AP@[.50:.95]（maxDets=100，全部面积档）。零预测图计 0。"""
+    import contextlib
+    import io
+
     per = {}
     for img_id in img_ids:
+        d = [x for x in dets if x["image_id"] == img_id]
+        if not d:
+            per[img_id] = 0.0  # 零预测图保留在分母，AP=0（计划登记口径）
+            continue
         sub = COCO()
         anns = [a for a in gt.dataset["annotations"]
                 if a["image_id"] == img_id]
@@ -253,11 +268,11 @@ def _per_image_ap(gt: COCO, dets, img_ids) -> dict:
         sub.dataset = {"images": im, "annotations": anns,
                        "categories": gt.dataset["categories"]}
         sub.createIndex()
-        d = [x for x in dets if x["image_id"] == img_id]
-        dt = sub.loadRes(d) if d else None
+        dt = sub.loadRes(d)
         ev = COCOeval(sub, dt, iouType="segm")
         ev.params.maxDets = [PER_IMAGE_MAXDETS]
-        ev.evaluate(); ev.accumulate(); ev.summarize()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ev.evaluate(); ev.accumulate(); ev.summarize()
         per[img_id] = float(ev.stats[0])
     return per
 
@@ -274,11 +289,21 @@ def phase_score() -> None:
 
     cands = [json.loads(l) for l in open(out_dir / "candidates.jsonl")
              if l.strip()]
-    print(f"[frozen] {len(cands)} candidates, {len(img_ids)} imgs", flush=True)
-    cached_ids = {c["img_id"] for c in cands}
-    missing = [i for i in img_ids if i not in cached_ids]
+    # 完成集 = done ledger（零候选图只进 ledger、不写 candidates —— 硬验收：
+    # manifest 中每张图必须已完成，否则拒绝出数）
+    done_ids = set()
+    with open(out_dir / "done_images.jsonl") as f:
+        for line in f:
+            if line.strip():
+                done_ids.add(json.loads(line)["img_id"])
+    id_set = set(img_ids)
+    cands = [c for c in cands if c["img_id"] in id_set]
+    print(f"[frozen] {len(cands)} candidates, {len(img_ids)} imgs "
+          f"({len(done_ids & id_set)}/{len(img_ids)} done)", flush=True)
+    missing = [i for i in img_ids if i not in done_ids]
     if missing:
-        sys.exit(f"[fatal] {len(missing)} manifest 图无缓存记录，先补 cache")
+        sys.exit(f"[fatal] {len(missing)} manifest 图未完成 cache（done ledger "
+                 f"缺失），先补 cache 再 score")
 
     raw_scores, z_own, z_spatial, z_pred, cand_meta = {}, {}, {}, {}, []
     for i, c in enumerate(cands):
@@ -299,6 +324,9 @@ def phase_score() -> None:
         assert scored[cid]["B1"] >= scored[cid]["B3"] - 1e-9
 
     results, per_img = {}, {}
+    import contextlib
+    import io
+
     for vname in ("B0", "B1", "B2", "B3"):
         dets = [{"image_id": m["img_id"],
                  "category_id": m["category_id"],
@@ -306,15 +334,15 @@ def phase_score() -> None:
                  "segmentation": m["segmentation"]} for m in cand_meta]
         sub = COCO()
         sub.dataset = {
-            "images": [i for i in gt.dataset["images"]
-                       if i["id"] in set(img_ids)],
+            "images": [i for i in gt.dataset["images"] if i["id"] in id_set],
             "annotations": [a for a in gt.dataset["annotations"]
-                            if a["image_id"] in set(img_ids)],
+                            if a["image_id"] in id_set],
             "categories": gt.dataset["categories"]}
         sub.createIndex()
         dt = sub.loadRes(dets) if dets else None
         ev = COCOeval(sub, dt, iouType="segm")
-        ev.evaluate(); ev.accumulate(); ev.summarize()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ev.evaluate(); ev.accumulate(); ev.summarize()
         results[vname] = {"mAP": round(float(ev.stats[0]), 4),
                           "AP50": round(float(ev.stats[1]), 4)}
         per_img[vname] = _per_image_ap(gt, dets, img_ids)

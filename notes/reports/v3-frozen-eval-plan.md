@@ -16,7 +16,11 @@
 ## 2. 验证集
 
 - 数据：iSAID train（与 dev 同分布同词表）。
-- 排除：`logs/t2_cache/manifest.json` 登记的 15 个 dev 源图组。
+- 排除（2026-10-25 修订，重启前登记）：**双重排除**——
+  `logs/t2_cache/manifest.json` 的 15 个 dev 源图组 **及**
+  `logs/probe_manifest.json`（T1 探针 300 图）对应的全部源图组
+  （explainer 2026-09-28"避开二者"要求；首跑漏排 T1 组致 47% 样本污染，
+  已停止清除并重抽样）。manifest 记录两组排除清单备查。
 - 抽样：held-out 组中以 seed=20260907 取 10 组、上限 200 图；
   零 GT 图不进分母（组级过滤，登记于脚本 docstring）。
 - 唯一性：本验证只运行一次；结果无论正负都作为 v3 最终口径归档。
@@ -47,13 +51,19 @@ dev 证据（B3 0.2655 > B2 0.2648，B2−B1=+0.28 点）预示第二行是大�
 - 运行命令见脚本 docstring；产物 `logs/v3_frozen_eval/{manifest.json,
   candidates.jsonl, done_images.jsonl, frozen_results.json}`。
 
-## 6. 已做自检（2026-10-25）
+## 6. 已做自检（2026-10-25，含重启前修订）
 
 - `py_compile` 通过。
 - 合成数据冒烟：空间/非空间 rival 惩罚方向正确；λ=2 下 B2/B3 ≤ B1；
   B1 分解公式逐位核对（见 SMOKE_OK 输出）。
-- 待补（运行前）：cache 阶段与 t2_candidate_cache 的逐图一致性抽检
-  （同一图跑两遍，候选集合应一致——允许浮点顺序差异）。
+- 独立审计（子代理，2026-10-25）：B0–B3 口径、score_candidates 唯一入口、
+  cache 与 dev 版等价性、bootstrap 配对、RLE round-trip 全部通过；发现的
+  三项致命问题（抽样漏排 T1 组、零候选图致 score 误退出、零预测图逐图 AP
+  崩溃）已修复并以本节+§2 登记修复口径：零候选/零预测图保留在全局 mAP 与
+  逐图 AP 分母（AP=0），完成集以 done ledger 为准。
+- "cache 与 t2_candidate_cache 同图一致性抽检"豁免登记：两者常量与 NMS/
+  crop/邻接实现经审计逐行核对等价（POOL_FLOOR/NMS_IOU/CROP_MARGIN/
+  RIVAL_IOU/_iou_cropped/_tight_bbox 同源 import），不再做运行期抽检。
 
 ## 7. 开放问题（需项目负责人确认）
 
