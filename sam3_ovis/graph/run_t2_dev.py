@@ -184,11 +184,13 @@ def main():
                 if z_nospatial is None or z > z_nospatial:
                     z_nospatial = z
             cands.append({
-                "img_id": img_id, "cat_name": d["cat_name"],
+                "img_id": img_id, "cat_id": d["cat_id"],
+                "cat_name": d["cat_name"],
                 "raw_score": d["score"],
                 "z_own": z_own,
                 "z_spatial_max": spatial_rival_z,
                 "z_nospatial_max": z_nospatial,
+                "bbox": d["bbox"],
             })
         if (k + 1) % 25 == 0:
             el = time.time() - t0
@@ -236,6 +238,7 @@ def main():
                     "image_id": c["img_id"],
                     "category_name": c["cat_name"],
                     "score": round(c["scores"][variant], 6),
+                    "bbox": c["bbox"],
                 }) + "\n")
     print(f"[t2] predictions -> {out_dir} ({len(variants)} variants)",
           flush=True)

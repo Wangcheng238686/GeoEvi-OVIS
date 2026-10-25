@@ -4,15 +4,17 @@
 
 ## 当前版本
 
-- 当前设计：[`design-v3.0.md`](./design-v3.0.md)
-- 当前实施：[`implementation-v3.0.md`](./implementation-v3.0.md)（分阶段步骤、判据与报告制度）
+- 当前大图主线设计：[`design-v4.0.md`](./design-v4.0.md)（二维拓扑引导的跨窗正框提示传播）
+- 当前大图主线实施：[`implementation-v4.0.md`](./implementation-v4.0.md)（S0–S5 准入、对照与止损）
+- v3 收尾设计：[`design-v3.0.md`](./design-v3.0.md)（只完成已登记的类别重排独立验证）
+- v3 收尾实施：[`implementation-v3.0.md`](./implementation-v3.0.md)（不再扩展滑窗或 memory）
 - 面向项目负责人的现状说明：[`project-explainer.md`](./project-explainer.md)（每次项目解释后同步维护）
-- 状态：v3.0 方法已收敛，尚未实现；先修复实验基础并验证跨类别消歧的作用空间
-- 主任务：SCORE text-only OV-RSIS
+- 状态：v4.0 路线已收敛，尚未通过 S0 大图数据与作用空间准入；v3 仅做冻结验证收尾
+- 主任务：真实遥感大图上的开放词汇实例分割
 - 主基座：SAM3
-- 核心机制：同实例跨类别相对证据；是否需要图由实验决定
-- 扩展模式：GT exemplar、self-exemplar
-- 后置内容：MLLM、跨图持久记忆、SAM3 video memory
+- 核心机制：二维 tile 拓扑与跨窗实例共指选择可靠 anchor，经正 box exemplar 回注 SAM3
+- 唯一主方法：TG-CWP；C0/C1/C3 只作因果对照，不是并行研发路线
+- 后置内容：原生 memory/attention 改造、GNN、LoRA/adapter、MLLM、跨图持久记忆
 - 风险登记：[`design-v2.md` §12](./design-v2.md)（2026-09-02 可行性分析）
 
 ## 历史版本
