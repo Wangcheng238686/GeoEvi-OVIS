@@ -336,7 +336,12 @@ def main():
             with Image.open(info[name]["image_path"]) as im:
                 for ty in ay:
                     for tx in ax:
-                        crop = im.crop((tx, ty, tx + args.tile, ty + args.tile))
+                        # 按图像边界裁实际尺寸：小于 tile 的图 PIL 会把超界
+                        # crop 零填充到请求尺寸，mask(1024²) 贴不进小画布；
+                        # 直接给 SAM3 实际尺寸（t2 管线同口径，mask=输入尺寸）
+                        crop = im.crop((tx, ty,
+                                        min(tx + args.tile, W),
+                                        min(ty + args.tile, H)))
                         tw, th = crop.size  # 图 <= tile 时 < tile
                         state = processor.set_image(crop.convert("RGB"))
                         for cls in DOTA15_CLASSES:
