@@ -257,7 +257,11 @@ def _per_image_ap(gt: COCO, dets, img_ids) -> dict:
 
     per = {}
     for img_id in img_ids:
-        d = [x for x in dets if x["image_id"] == img_id]
+        # loadRes 会原地给 dict 补 area/bbox（numpy）；逐图必须用全新构造，
+        # 否则复用上一轮被补过 bbox 的对象会在 'bbox' == [] 分支广播崩溃
+        d = [{"image_id": x["image_id"], "category_id": x["category_id"],
+              "score": x["score"], "segmentation": x["segmentation"]}
+             for x in dets if x["image_id"] == img_id]
         if not d:
             per[img_id] = 0.0  # 零预测图保留在分母，AP=0（计划登记口径）
             continue
@@ -270,7 +274,9 @@ def _per_image_ap(gt: COCO, dets, img_ids) -> dict:
         sub.createIndex()
         dt = sub.loadRes(d)
         ev = COCOeval(sub, dt, iouType="segm")
-        ev.params.maxDets = [PER_IMAGE_MAXDETS]
+        # summarize() 硬编码读取 maxDets[0/1/2]，必须给三元组；
+        # stats[0]（我们读取的 AP@[.50:.95]）取 maxDets[2]=100，即登记口径
+        ev.params.maxDets = [1, 10, PER_IMAGE_MAXDETS]
         with contextlib.redirect_stdout(io.StringIO()):
             ev.evaluate(); ev.accumulate(); ev.summarize()
         per[img_id] = float(ev.stats[0])
