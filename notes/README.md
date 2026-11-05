@@ -5,14 +5,16 @@
 ## 当前版本
 
 - 当前方向决定：[`decisions-2026-10.md`](./decisions-2026-10.md)（图与 SAM3 原生记忆、同图上下文、允许遥感微调）
+- 实施准备入口：[`2026-10-28 实施准备交接`](./reports/2026-10-28-implementation-preparation.md)（含文献、CA-SAM2、SAM3 接口及数据环境四份报告；CPU 组件已复核，完整模型回接未测）
 - 当前查重：[`关系上下文记忆调研`](./reports/2026-10-25-sam3-relational-memory-prior-art.md)
 - 候选探针：[`三条图记忆路线草案`](./reports/2026-10-25-graph-memory-candidate-routes.md)（关系选择 / 角色区分 / 冲突门控，尚未实现）
+- 上下文获取讨论：[`多级上下文备忘`](./reports/2026-10-28-multilevel-context-acquisition.md)（局部环境 / 邻居实例 / 大区域场景；第三级按负责人要求保留为候选）
 - 9 月大图方案设计：[`design-v4.0.md`](./design-v4.0.md)（TG-CWP 历史收敛方案，供参考）
 - 9 月大图方案实施：[`implementation-v4.0.md`](./implementation-v4.0.md)（S0 准入 2026-10-26 判不足已止损，见 [`reports/v4-s0-c0-verdict.md`](./reports/v4-s0-c0-verdict.md)）
 - v3 收尾设计：[`design-v3.0.md`](./design-v3.0.md)（已关账，2026-10-26：负结果，见 [`reports/v3-frozen-eval-results.md`](./reports/v3-frozen-eval-results.md)）
 - v3 收尾实施：[`implementation-v3.0.md`](./implementation-v3.0.md)（不再扩展滑窗或 memory）
 - 面向项目负责人的现状说明：[`project-explainer.md`](./project-explainer.md)（每次项目解释后同步维护）
-- 状态：2026-10-25 重新访谈与调研；核心约束已确认，具体新设计与并行探针尚待形成
+- 状态：2026-10-28 三路调研与实施准备完成；下一关为共同接口与类别路径验证，尚未冻结新设计或启动训练
 - 主任务：遥感开放词汇实例分割；大图切窗作为可选观测场景
 - 主基座：SAM3
 - 核心构想：图组织同图实例与环境上下文，控制原生记忆的写入/读取，帮助当前实例识别与分割
