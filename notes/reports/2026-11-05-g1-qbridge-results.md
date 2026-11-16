@@ -65,3 +65,8 @@ G1 暴露的关键问题：
 2. neck 失配修正（FPN→tracker-neck 适配或 writer 输入归一）能否把
    own-vs-foreign 敏感性从 0.61 提到有效区间——若不能，上下文判别
    主张要降级。
+
+## 4. 更正注记（2026-11-16，三探针期间发现）
+
+1. **精度口径更正**：R2 探针发现模型构建经 `sam3/sam3/model/sam3_tracking_predictor.py:51` 泄漏全局 bf16 autocast——本报告所有"fp32"表述实为 bf16 量化口径，Δ 值落在 bf16 网格上。核心结论量级不受影响（中位 0.078 仍远超 bf16 量化步长），但数值精度声明以本注记为准；后续探针统一采用"特征路径 autocast + 打分/桥/文本方向 fp32 岛"口径（见 `2026-11-16-r2-crosstalk-baseline.md` §2）。
+2. **网格口径更正**：协议与本文的"63×63"为笔误，实际画布网格为 72×72（stride 14）；neck 探针源码核读确认 `sam2_backbone_out.backbone_fpn[-1]` 与该画布同网格同通道（见 `2026-11-16-neck-mismatch-sensitivity.md`）。
