@@ -99,14 +99,19 @@ def region_chan_stats(feat_chw, m_grid):
 
 
 def procrustes(A, B):
-    """中心化正交 Procrustes：min_Q ||AcQ − Bc||_F。A/B [R,C] fp32。"""
+    """中心化正交 Procrustes：min_Q ||AcQ − Bc||_F。A/B [R,C]，统一落 fp32
+    （bf16 混合精度下 torch.linalg.svd 不支持 BFloat16）。"""
     eps = 1e-8
+    A = A.float()
+    B = B.float()
+    cross = A.shape[1] != B.shape[1]
     Ac = A - A.mean(0, keepdim=True)
     Bc = B - B.mean(0, keepdim=True)
     nb = float(Bc.norm()) + eps
-    res_before = float((Ac - Bc).norm() / nb)
-    U, S, Vh = torch.linalg.svd(Ac.T @ Bc)
-    Q = U @ Vh
+    # 未对齐残差跨通道无定义（不同维向量不可直接比），置 None
+    res_before = None if cross else float((Ac - Bc).norm() / nb)
+    U, S, Vh = torch.linalg.svd(Ac.T @ Bc, full_matrices=False)
+    Q = U @ Vh  # 跨通道时 Q 为 [C_A, C_B]；方阵情形与原实现等价
     D = Ac @ Q - Bc
     res_after = float(D.norm() / nb)
     a = Ac @ Q
@@ -114,7 +119,8 @@ def procrustes(A, B):
     s2 = S.pow(2)
     cum = torch.cumsum(s2 / (s2.sum() + eps), 0)
     return {
-        "res_before": round(res_before, 4),
+        "res_before": (None if res_before is None
+                       else round(res_before, 4)),
         "res_after": round(res_after, 4),
         "cos_after_mean": round(float(cos.mean()), 4),
         "sv_energy_cum": {str(k): round(float(cum[min(k, len(cum)) - 1]), 4)
@@ -140,8 +146,20 @@ def cos_matrix_diag_offdiag(A, B):
 
 
 def dist_stats_pair(fdet_chw, ftrk_chw, ftrkhr_chw, region_masks, grid_hw):
-    """D1 主函数：det 72² vs trk 72²（+trk 144²→72² 补充）。全部 fp32。
+    """D1 主函数入口：bf16 混合精度下输入可能是 bf16 且处于 autocast 上下文
+    ——统一落 fp32 并关闭 autocast 后再统计（协议"统计 fp32"口径）。
     返回 (stats, Ad, At, Ath)：Ad/At/Ath 为区域池化矩阵 [R,C]。"""
+    with torch.autocast("cuda", enabled=False):
+        fdet_chw = fdet_chw.float()
+        ftrk_chw = ftrk_chw.float()
+        ftrkhr_chw = (None if ftrkhr_chw is None
+                      else ftrkhr_chw.float())
+        return _dist_stats_pair_impl(
+            fdet_chw, ftrk_chw, ftrkhr_chw, region_masks, grid_hw)
+
+
+def _dist_stats_pair_impl(fdet_chw, ftrk_chw, ftrkhr_chw, region_masks, grid_hw):
+    """D1 实现：det 72² vs trk 72²（+trk 144²→72² 补充）。全部 fp32。"""
     eps = 1e-6
     out = {"n_regions": len(region_masks), "grid": list(grid_hw)}
     # 全图逐通道统计 + 逐位置模长
@@ -186,7 +204,13 @@ def dist_stats_pair(fdet_chw, ftrk_chw, ftrkhr_chw, region_masks, grid_hw):
     out["region"]["procrustes_det_trk"] = procrustes(Ad, At)
     if ftrkhr_chw is not None and len(Ath) == len(Ad):
         Ath = torch.stack(Ath)
-        out["region"]["pooled_cos_det_trkhr"] = cos_matrix_diag_offdiag(Ad, Ath)
+        if Ath.shape[-1] == Ad.shape[-1]:
+            out["region"]["pooled_cos_det_trkhr"] = cos_matrix_diag_offdiag(
+                Ad, Ath)
+        else:  # fpn[-2] 为 64 通道（实测）：逐行余弦需同 C，跳过并登记
+            out["region"]["trkhr_channel_note"] = (
+                f"C_trkhr={Ath.shape[-1]} != C_det={Ad.shape[-1]}; "
+                "rowwise cos skipped, procrustes still valid")
         out["region"]["procrustes_det_trkhr"] = procrustes(Ad, Ath)
     else:
         Ath = None
