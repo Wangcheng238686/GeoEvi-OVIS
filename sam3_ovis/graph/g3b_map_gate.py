@@ -80,6 +80,12 @@ def phase_cand():
     txt /= np.linalg.norm(txt, axis=1, keepdims=True)
 
     files = sorted(CACHE_ROOT.glob("img_*.pt"))
+    # 只处理 manifest 登记的 100 图（磁盘上另有 30 个早期非交错运行残留，
+    # 已核实不在 manifest 内，排除——协议口径 100 图）
+    man_ids = {int(k) for k in json.load(
+        open(CACHE_ROOT / "manifest.json"))["images"]}
+    files = [p for p in files
+             if int(p.stem.split("_")[1]) in man_ids]
     # 异图对照：确定性配对（i -> i+1 环绕）
     order = [torch.load(p, weights_only=False) for p in files]
     t0 = time.time()
@@ -151,10 +157,62 @@ def phase_cand():
     # R_foreign 在 eval 阶段用其他图的 self/ctx 证据等价构造（登记）
 
 
+def phase_cand5():
+    """A5（SCORE 式膨胀直注模拟）的补充证据：每候选 mask 膨胀 0.5 边距
+    crop 的 RemoteCLIP 文本逻辑，写入 cands_*.json 的 ev.dilated。"""
+    device = "cuda"
+    from graph.provider import RemoteCLIPProvider
+
+    root = Path(os.environ["SAM3_OVIS_DATA_ROOT"])
+    spec = DATASETS["iSAID"]
+    gt = COCO(str(root / spec.val_json))
+    cat_ids = gt.getCatIds()
+    cat_names = [gt.loadCats([c])[0]["name"] for c in cat_ids]
+    clip = RemoteCLIPProvider()
+    txt = np.stack([clip.encode_texts_cached(cat_names)[c]
+                    for c in cat_names]).astype(np.float32)
+    txt /= np.linalg.norm(txt, axis=1, keepdims=True)
+
+    for p in sorted(CAND_DIR.glob("cands_*.json")):
+        rec = json.loads(p.read_text())
+        if rec["cands"] and "dilated" in rec["cands"][0].get("ev", {}):
+            continue
+        image = _open_image(rec["img_id"])
+        cache = {}
+        for c in rec["cands"]:
+            x1, y1, x2, y2 = c["box"]
+            mx, my = (x2 - x1) * 0.5, (y2 - y1) * 0.5
+            key = (int(max(0, x1 - mx)), int(max(0, y1 - my)),
+                   int(min(rec["W"], x2 + mx)),
+                   int(min(rec["H"], y2 + my)))
+            if key not in cache:
+                f = np.asarray(clip.encode_images_cached(
+                    [(f"d{key}", image.crop(key))])[f"d{key}"],
+                    dtype=np.float32)
+                f /= (np.linalg.norm(f) + 1e-9)
+                cache[key] = (f @ txt.T).round(4).tolist()
+            c["ev"]["dilated"] = cache[key]
+        p.write_text(json.dumps(rec))
+        clip.clear_image_cache()
+        print(f"[cand5] {rec['img_id']} done", flush=True)
+
+
+def _open_image(img_id):
+    root = Path(os.environ["SAM3_OVIS_DATA_ROOT"])
+    spec = DATASETS["iSAID"]
+    gt = COCO(str(root / spec.val_json))
+    info = gt.loadImgs(img_id)[0]
+    return Image.open(root / spec.images_dir / info["file_name"]) \
+        .convert("RGB")
+
+
 def _load_cands():
+    man_ids = {int(k) for k in json.load(
+        open(CACHE_ROOT / "manifest.json"))["images"]}
     out = []
     for p in sorted(CAND_DIR.glob("cands_*.json")):
-        out.append(json.loads(p.read_text()))
+        if int(p.stem.split("_")[1]) in man_ids:
+            out.append(json.loads(p.read_text()))
     return out
 
 
@@ -166,7 +224,7 @@ def _margins(ev_key):
         if cat_names is None:
             # 类表从 g2a 缓存统一获取
             base = torch.load(sorted(CACHE_ROOT.glob("img_*.pt"))[0],
-                              weights_only=False)
+                              weights_only=False, map_location="cpu")
             cat_names = sorted(base["texts"].keys())
         for c in rec["cands"]:
             r = np.array(c["ev"][ev_key], np.float32) \
@@ -245,10 +303,13 @@ def phase_eval():
     recs, cat_names = _margins("self")
     recs2, _ = _margins("ctx")
     recs3, _ = _margins("uni")
-    for r1, r2, r3 in zip(recs, recs2, recs3):
-        for c1, c2, c3 in zip(r1["cands"], r2["cands"], r3["cands"]):
+    recs5, _ = _margins("dilated")
+    for r1, r2, r3, r5 in zip(recs, recs2, recs3, recs5):
+        for c1, c2, c3, c5 in zip(r1["cands"], r2["cands"], r3["cands"],
+                                  r5["cands"]):
             c1["m_ctx"] = c2["m_ctx"]
             c1["m_uni"] = c3["m_uni"]
+            c1["m_dilated"] = c5["m_dilated"]
     sub, dets_base, name_to_id = _build_eval(recs, cat_names)
     val_recs = [r for r in recs if r["split"] == "val"]
     tr_recs = [r for r in recs if r["split"] == "train"]
@@ -270,7 +331,7 @@ def phase_eval():
     # α 仅 train 组选择
     tr_sub_recs = recs
     alphas = {}
-    for mkey in ("m_self", "m_ctx", "m_uni"):
+    for mkey in ("m_self", "m_ctx", "m_uni", "m_dilated"):
         best_a, best = 0.0, -1
         for a in ALPHAS:
             if a == 0:
@@ -289,7 +350,8 @@ def phase_eval():
     results["val_mAP"]["A0"] = _mAP(sub, [d for d in dets_base
                                           if d["image_id"] in set(val_ids)])
     vecs = {"A0": np.array([per_base[i] for i in val_ids])}
-    arms = {"A2": "m_ctx", "A3": "m_uni", "A1": "m_self"}
+    arms = {"A2": "m_ctx", "A3": "m_uni", "A1": "m_self",
+            "A5": "m_dilated"}
     for arm, mkey in arms.items():
         dets = fuse(alphas[mkey], mkey, val_recs)
         results["val_mAP"][arm] = _mAP(sub, dets)
@@ -320,7 +382,8 @@ def phase_eval():
 
     rng = np.random.default_rng(SEED)
     n = len(val_ids)
-    for a, b in (("A2", "A0"), ("A3", "A0"), ("A2", "A4")):
+    for a, b in (("A2", "A0"), ("A3", "A0"), ("A2", "A4"),
+                 ("A2", "A5"), ("A5", "A0")):
         diff = vecs[a] - vecs[b]
         samples = np.empty(BOOT_N)
         for t in range(BOOT_N):
@@ -339,10 +402,13 @@ def phase_eval():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", choices=["cand", "eval"], required=True)
+    ap.add_argument("--phase", choices=["cand", "cand5", "eval"],
+                    required=True)
     args = ap.parse_args()
     if args.phase == "cand":
         phase_cand()
+    elif args.phase == "cand5":
+        phase_cand5()
     else:
         phase_eval()
 
