@@ -21,6 +21,8 @@ isaid_train:
         - _target_: sam3.train.transforms.point_sampling.RandomizeInputBbox
           box_noise_std: 0.1
           box_noise_max: 20
+        - _target_: r1_train_wrapper.PhotometricAug
+          p: 0.5
         - _target_: sam3.train.transforms.segmentation.DecodeRle
         - _target_: sam3.train.transforms.basic_for_api.RandomResizeAPI
           sizes:
@@ -133,10 +135,11 @@ scratch:
   hybrid_repeats: 1
   context_length: 2
   gather_pred_via_filesys: false
-  lr_scale: 0.1
-  lr_transformer: ${times:8e-4,${scratch.lr_scale}}
-  lr_vision_backbone: ${times:2.5e-4,${scratch.lr_scale}}
-  lr_language_backbone: ${times:5e-5,${scratch.lr_scale}}
+  # v2: LoRA 平坦学习率（协议 3e-5~5e-5 取 5e-5；语言主干无 LoRA 冻结）
+  lr_scale: null
+  lr_transformer: 5.0e-5
+  lr_vision_backbone: 5.0e-5
+  lr_language_backbone: 1.0e-5
   lrd_vision_backbone: 0.9
   wd: 0.1
   scheduler_timescale: 20
@@ -189,9 +192,10 @@ trainer:
         max_train_queries: 50000
         max_val_queries: 50000
         training: true
+        limit_ids: 24
         use_caching: False
         img_folder: ${paths.isaid_root}
-        ann_file: ${paths.r1_root}/isaid_train_g0.json
+        ann_file: ${paths.r1_root}/isaid_train_g0_space.json
       shuffle: True
       batch_size: ${scratch.train_batch_size}
       num_workers: ${scratch.num_train_workers}
@@ -209,7 +213,7 @@ trainer:
           category_chunk_size: 15
           _partial_: true
         img_folder: ${paths.isaid_root}
-        ann_file: ${paths.r1_root}/isaid_tiny_val.json
+        ann_file: ${paths.r1_root}/isaid_tiny_val_space.json
         transforms: ${isaid_train.val_transforms}
         max_ann_per_img: 100000
         multiplier: 1
@@ -241,7 +245,7 @@ trainer:
           maxdets: 100
           pred_file_evaluators:
             - _target_: sam3.eval.coco_eval_offline.CocoEvaluatorOfflineWithPredFileEvaluators
-              gt_path: ${paths.r1_root}/isaid_tiny_val.json
+              gt_path: ${paths.r1_root}/isaid_tiny_val_space.json
               tide: False
               iou_type: "bbox"
   optim:
