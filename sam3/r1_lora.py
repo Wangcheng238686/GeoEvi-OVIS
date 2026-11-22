@@ -54,15 +54,17 @@ def is_target(name: str) -> bool:
 def apply_lora(model: nn.Module, r: int = R, alpha: int = ALPHA):
     """冻结基座并注入 LoRA；返回原 model（原位修改）。
 
-    nn.MultiheadAttention 的子 Linear 被排除：其快速路径直接以
-    F.linear(weight) 计算，替换后要么崩溃要么 LoRA 被静默绕过
-    （烟雾实测 AttributeError，2026-11-21 登记）。
+    排除两类 MHA：torch.nn.MultiheadAttention 与
+    sam3.model.model_misc.MultiheadAttention（自定义类，其 forward 直传
+    out_proj.weight/bias，替换后 LoRA 被静默旁路——审计 C 项发现，
+    2026-11-22 登记；排除后有效替换 = trunk qkv 32 个，~1.05M 参数）。
     """
+    from sam3.model.model_misc import MultiheadAttention as _CustomMHA
     for p in model.parameters():
         p.requires_grad_(False)
     n_replaced, n_skip_mha = 0, 0
     for name, mod in list(model.named_modules()):
-        if isinstance(mod, nn.MultiheadAttention):
+        if isinstance(mod, (nn.MultiheadAttention, _CustomMHA)):
             n_skip_mha += 1
             continue
         for attr, child in list(mod.named_children()):
@@ -72,8 +74,8 @@ def apply_lora(model: nn.Module, r: int = R, alpha: int = ALPHA):
                     setattr(mod, attr, LoRALinear(child, r, alpha))
                     n_replaced += 1
     print(f"[lora] replaced {n_replaced} Linears "
-          f"(r={r}, alpha={alpha}; skipped {n_skip_mha} MHA modules)",
-          flush=True)
+          f"(r={r}, alpha={alpha}; skipped {n_skip_mha} MHA modules "
+          f"incl. custom)", flush=True)
     return model
 
 

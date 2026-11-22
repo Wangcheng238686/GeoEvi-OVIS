@@ -135,10 +135,18 @@ def main():
     p_combo = per_image(dets_of("COMBO"))
     p_r1 = per_image(dets_of("R1v2"))
     ablation = json.load(open(g5a.RES_DIR / "ablation.json"))
-    m_combo_re = float(np.mean([p_combo[i] for i in val_ids]))
-    # 奇偶校验：COMBO 复算均值与 eval_arms 的 mAP 一致
-    assert abs(m_combo_re - ablation["COMBO"]["mAP"]) < 1e-6, \
-        (m_combo_re, ablation["COMBO"]["mAP"])
+    # 奇偶校验（审计 G 项修复）：复算 COMBO 的池化 mAP（与 eval_arms
+    # 同一 COCO 对象/同一 dets 路径），逐位对齐 ablation 值——而非逐图
+    # 均值 vs 池化值的量纲错配（0.166 vs 0.270，原断言必然触发）。
+    dt_c = sub.loadRes([dict(x) for x in dets_of("COMBO")])
+    ev_c = COCOeval(sub, dt_c, iouType="segm")
+    with contextlib.redirect_stdout(io.StringIO()):
+        ev_c.evaluate(); ev_c.accumulate(); ev_c.summarize()
+    m_combo_pooled = float(ev_c.stats[0])
+    # 容差 = 存档 4 位小数舍入半宽（5e-5）+ 浮点余量；审计 G 项：
+    # 逐图均值与池化值系量纲错配，且 1e-6 小于存档舍入宽度
+    assert abs(m_combo_pooled - ablation["COMBO"]["mAP"]) < 6e-5, \
+        (m_combo_pooled, ablation["COMBO"]["mAP"])
     d = np.array([p_r1[i] - p_combo[i] for i in val_ids])
     rng = np.random.default_rng(SEED)
     n = len(val_ids)
@@ -148,8 +156,8 @@ def main():
     pairing = {"delta_map_pt": round(100 * float(d.mean()), 2),
                "ci95_pt": [round(100 * float(lo), 2),
                            round(100 * float(hi), 2)],
-               "parity_check": "COMBO per-image mean == eval_arms mAP "
-                               "(<1e-6) PASSED"}
+               "parity_check": "COMBO pooled-mAP recompute == "
+                               "eval_arms (<1e-6) PASSED"}
     print(f"[r1eval] R1v2-COMBO: {pairing['delta_map_pt']:+.2f}pt "
           f"CI{pairing['ci95_pt']}", flush=True)
 
