@@ -1,0 +1,5 @@
+# EXP Registry（全量实验登记）
+
+| EXP-ID | 日期 | 实验名 | 协议 | 启动 commit / tag | 状态 |
+|---|---|---|---|---|---|
+| EXP-0001 | 2026-11-22 | R1 v2 源域 LoRA 微调 SAM3（DDP-4） | notes/reports/2026-11-22-r1-protocol-v2.md（含 §5 偏离登记） | 见启动 commit / tag exp-EXP-0001 | running |

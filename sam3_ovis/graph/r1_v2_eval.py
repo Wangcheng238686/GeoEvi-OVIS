@@ -8,7 +8,7 @@
 2. g5a.gen_arm("R1v2", COMBO 设置{space, 0.01, 1344}) 生成臂候选；
 3. g5a.eval_arms 全臂评估（R1v2 自动入表）；
 4. R1v2−COMBO 逐图配对 bootstrap（协议显著性口径）；COMBO 复算值与
-   eval_arms 输出做奇偶校验（|Δ|<1e-6，防复算漂移）；
+   eval_arms 输出做奇偶校验（池化对池化，容差 6e-5 覆盖存档舍入）；
 5. 按协议 v2 判定门打印 GO/PARTIAL/NO-GO。
 
 Run:  source sam3_ovis/scripts/load_environment.sh
@@ -157,7 +157,7 @@ def main():
                "ci95_pt": [round(100 * float(lo), 2),
                            round(100 * float(hi), 2)],
                "parity_check": "COMBO pooled-mAP recompute == "
-                               "eval_arms (<1e-6) PASSED"}
+                               "eval_arms (<6e-5) PASSED"}
     print(f"[r1eval] R1v2-COMBO: {pairing['delta_map_pt']:+.2f}pt "
           f"CI{pairing['ci95_pt']}", flush=True)
 
