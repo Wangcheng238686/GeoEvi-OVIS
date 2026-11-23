@@ -56,7 +56,13 @@ def prompt_of(cname, style):
 
 def nms_image(cands, key="score"):
     kept = []
-    for cls in {c["cls"] for c in cands}:
+    # 类别按名排序迭代：类内 NMS 的保留集合与顺序无关，但 kept 的
+    # 顺序原先随无序集合变化，会外溢到下游（G5b 勘误的根源之一）
+    for cls in sorted({c["cls"] for c in cands}):
+        # 只排序类别；组内保持原稳定排序（仅按 -score）——不改并列打破
+        # 规则：实测给同分候选加坐标并列规则会改变密集臂（COMBO/R1v2）
+        # 的 NMS 保留集合，mAP 偏离已用于 EXP-0001 判定的存档值
+        # 0.04pt。存档数字不可事后改写，故并列规则维持原样。
         group = sorted([c for c in cands if c["cls"] == cls],
                        key=lambda c: -c[key])
         for c in group:
@@ -199,9 +205,11 @@ def eval_arms(gt, name_to_id):
         dets, n_cand, n_fp = [], 0, 0
         rec_bbox = rec_ctr = rec_same = 0
         n_gt = 0
+        n_kept = n_kept_matched = n_kept_matched_same = 0
         for r in recs:
             kept = nms_image(r["cands"])
             n_cand += len(r["cands"])
+            n_kept += len(kept)
             for c in kept:
                 dets.append({"image_id": r["img_id"],
                              "category_id": name_to_id[c["cls"]],
@@ -209,47 +217,62 @@ def eval_arms(gt, name_to_id):
                              "score": c["score"]})
             gts = gt_by_img.get(r["img_id"], [])
             n_gt += len(gts)
+            # ---- 候选侧（确定性）：每个保留候选的最佳 GT ----
+            # 旧实现的 same-class 走"中心点首命中即 break"，而 kept 的
+            # 顺序随无序类别集合的迭代顺序变化 → 非确定性（G5b 勘误）。
+            # 这里把"候选→最佳 GT"一次算定（并列取最大 IoU 的首个，
+            # 顺序只影响并列，不影响类别正确性的判定集合），下游两个
+            # 口径都从这张表读，不再依赖 kept 的顺序。
+            cand_best = []  # 与 kept 对齐：(best_iou, best_cat_id)
+            for c in kept:
+                bi, bc = 0.0, None
+                for a in gts:
+                    ax, ay, aw, ah = a["bbox"]
+                    iou = box_iou_xyxy(c["box"], (ax, ay,
+                                                  ax + aw, ay + ah))
+                    if iou > bi:
+                        bi, bc = iou, a["category_id"]
+                cand_best.append((bi, bc))
+                n_kept_matched += bi >= 0.5
+                n_kept_matched_same += (bi >= 0.5
+                                        and bc == name_to_id[c["cls"]])
+            # ---- GT 侧（确定性）：任一类 / 任一同类候选覆盖 ----
             for a in gts:
                 gx, gy, gw, gh = a["bbox"]
                 gbox = (gx, gy, gx + gw, gy + gh)
-                cx, cy = gx + gw / 2, gy + gh / 2
-                best_iou, best_j = 0.0, -1
-                hit_ctr = False
-                same = False
-                for j, c in enumerate(kept):
-                    iou = box_iou_xyxy(c["box"], gbox)
-                    if iou > best_iou:
-                        best_iou, best_j = iou, j
-                if best_iou >= 0.5:
+                ious = [box_iou_xyxy(c["box"], gbox) for c in kept]
+                if any(v >= 0.5 for v in ious):
                     rec_bbox += 1
-                    same = kept[best_j]["cls"] == id_to_name[
-                        a["category_id"]]
-                for c in kept:
-                    m = mask_util.decode({
-                        "size": c["rle"]["size"],
-                        "counts": c["rle"]["counts"].encode()})
-                    if m[int(cy), int(cx)]:
-                        hit_ctr = True
-                        if c["cls"] == id_to_name[a["category_id"]]:
-                            same = True
-                        break
-                if hit_ctr:
-                    rec_ctr += 1
-                if same:
+                # same-class：存在任一同类候选以 IoU>=0.5 覆盖该 GT
+                if any(v >= 0.5 and kept[j]["cls"] == id_to_name[
+                        a["category_id"]] for j, v in enumerate(ious)):
                     rec_same += 1
-            n_fp += sum(1 for c in kept if not any(
-                box_iou_xyxy(c["box"], (a["bbox"][0], a["bbox"][1],
-                                        a["bbox"][0] + a["bbox"][2],
-                                        a["bbox"][1] + a["bbox"][3])) >= 0.5
-                for a in gts))
+                # center 召回：任一候选的 mask 覆盖 GT 中心（与类别无关，
+                # "任一"语义与顺序无关；显式 any，无 break）
+                cx, cy = int(gx + gw / 2), int(gy + gh / 2)
+                rec_ctr += any(mask_util.decode({
+                    "size": c["rle"]["size"],
+                    "counts": c["rle"]["counts"].encode()})[cy, cx]
+                    for c in kept)
+            n_fp += sum(1 for bi, _ in cand_best if bi < 0.5)
         results[arm] = {
             "mAP": round(mAP(dets), 4),
             "recall_bbox_pct": round(100 * rec_bbox / n_gt, 2),
             "recall_center_pct": round(100 * rec_ctr / n_gt, 2),
+            # GT 口径：被任一同类候选 IoU>=0.5 覆盖的 GT 占比（确定性）
             "recall_same_class_pct": round(100 * rec_same / n_gt, 2),
+            # 候选口径：匹配任一 GT(IoU>=0.5) 的保留候选中类别正确的比例
+            # （= G5b 报告"匹配者类别正确率"，确定性；S1 修复的锚点量）
+            "class_purity_pct": round(100 * n_kept_matched_same
+                                      / max(n_kept_matched, 1), 2),
+            "kept_matched_pct": round(100 * n_kept_matched
+                                      / max(n_kept, 1), 2),
             "fp_per_img": round(n_fp / len(recs), 1),
+            "kept_per_img": round(n_kept / len(recs), 1),
             "raw_cands_per_img": round(n_cand / len(recs), 1),
-            "n_gt": n_gt}
+            "n_gt": n_gt,
+            "n_kept": n_kept,
+            "n_kept_matched": n_kept_matched}
         per_store[arm] = per_image_mAP(dets)
         print(f"[{arm}] {results[arm]}", flush=True)
 

@@ -161,20 +161,34 @@ def main():
     print(f"[r1eval] R1v2-COMBO: {pairing['delta_map_pt']:+.2f}pt "
           f"CI{pairing['ci95_pt']}", flush=True)
 
-    # ---- 5. 判定门（协议 v2 §1）----
+    # ---- 5. 判定门（协议 v2 §1 + §6 勘误）----
+    # same-class 门：协议 GO 门的 "≥45%" 按已作废的非确定性指标定义，
+    # 且未指明口径；两个确定性口径给出相反答案（协议 §6）→ 该门
+    # **不可判**。这里如实输出两个口径与 "UNDECIDABLE"，不替负责人
+    # 重定门限，也不让它在任何方向上参与 GO 判定。
     r1 = ablation["R1v2"]
     verdict = {
         "mAP": r1["mAP"], "gate_mAP": 0.39,
-        "same_class_pct": r1["recall_same_class_pct"],
-        "gate_same_class": 45,
+        "class_purity_pct": r1["class_purity_pct"],
+        "recall_same_class_gt_pct": r1["recall_same_class_pct"],
+        "same_class_gate": "UNDECIDABLE (protocol §6 erratum: gate "
+                           "defined on voided nondeterministic metric; "
+                           "two deterministic readings disagree)",
         "fp_per_img": r1["fp_per_img"], "gate_fp_max": 350,
         "vs_COMBO": pairing}
-    ok = (r1["mAP"] >= 0.39 and lo > 0
-          and r1["recall_same_class_pct"] >= 45
-          and r1["fp_per_img"] <= 350)
-    partial = (0.30 <= r1["mAP"] < 0.39 and lo > 0)
-    verdict["VERDICT"] = ("GO" if ok else
-                          "PARTIAL" if partial else "NO-GO")
+    m_map_ok = r1["mAP"] >= 0.39 and lo > 0
+    m_fp_ok = r1["fp_per_img"] <= 350
+    # 三种结局互斥：mAP 过 0.39 但 FP 越护栏 = 未达 GO，不得落进 PARTIAL
+    # （PARTIAL 区间按协议为 [0.30, 0.39)）
+    if m_map_ok and m_fp_ok:
+        v = "GO pending same-class gate (UNDECIDABLE)"
+    elif 0.30 <= r1["mAP"] < 0.39 and lo > 0:
+        v = "PARTIAL"
+    else:
+        v = "NO-GO"
+    verdict["mAP_gate_pass"] = bool(m_map_ok)
+    verdict["fp_gate_pass"] = bool(m_fp_ok)
+    verdict["VERDICT"] = v
     out_path = g5a.RES_DIR / "r1v2_verdict.json"
     out_path.write_text(json.dumps(verdict, indent=1,
                                    ensure_ascii=False))

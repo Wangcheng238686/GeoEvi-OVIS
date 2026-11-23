@@ -1,0 +1,26 @@
+{
+ "mAP": 0.3341,
+ "gate_mAP": 0.39,
+ "class_purity_pct": 40.33,
+ "recall_same_class_gt_pct": 49.59,
+ "same_class_gate": "UNDECIDABLE (protocol §6 erratum: gate defined on voided nondeterministic metric; two deterministic readings disagree)",
+ "fp_per_img": 440.3,
+ "gate_fp_max": 350,
+ "vs_COMBO": {
+  "delta_map_pt": 3.24,
+  "ci95_pt": [
+   2.14,
+   4.57
+  ]
+ },
+ "mAP_gate_pass": false,
+ "fp_gate_pass": false,
+ "VERDICT": "PARTIAL",
+ "erratum_2026_11_24": {
+  "voided_field": "same_class_pct",
+  "voided_value": 45.5,
+  "reason": "nondeterministic metric (first-hit break x unordered class set)",
+  "verdict_unchanged": true,
+  "pairing_matches_prior": true
+ }
+}

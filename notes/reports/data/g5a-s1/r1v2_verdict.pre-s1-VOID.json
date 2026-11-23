@@ -1,0 +1,17 @@
+{
+ "mAP": 0.3341,
+ "gate_mAP": 0.39,
+ "same_class_pct": 45.5,
+ "gate_same_class": 45,
+ "fp_per_img": 440.3,
+ "gate_fp_max": 350,
+ "vs_COMBO": {
+  "delta_map_pt": 3.24,
+  "ci95_pt": [
+   2.14,
+   4.57
+  ],
+  "parity_check": "COMBO pooled-mAP recompute == eval_arms (<6e-5) PASSED"
+ },
+ "VERDICT": "PARTIAL"
+}
