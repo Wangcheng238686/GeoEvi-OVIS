@@ -52,7 +52,9 @@ def main():
                   for c in gt.loadCats(gt.getCatIds())}
 
     # ---- 1. 微调模型 ----
-    sys.path.insert(0, "/home/wangcheng2021/project/GeoEvi-OVIS/sam3")
+    # 从文件位置推导仓库根（sam3_ovis/graph/ 的上两级），不写死绝对路径：
+    # 本机与 node01 的仓库路径不同，推导式在两台机器上都成立
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sam3"))
     from sam3.model_builder import build_sam3_image_model
     from r1_lora import apply_lora
     # 评估需要 mask（g5a 口径）→ seg head 必须构建；训练时 seg off，
